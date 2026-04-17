@@ -11,7 +11,8 @@ load_dotenv()
 EMAIL = os.getenv("AQUALINK_EMAIL")
 PASSWORD = os.getenv("AQUALINK_PASSWORD")
 SERIAL = os.getenv("AQUALINK_SERIAL")
-VALVE_COOLDOWN = 60  # Protects mechanical rotation
+TEMP_MONITOR_INTERVAL = int(os.getenv("TEMP_MONITOR_INTERVAL", "600"))
+VALVE_COOLDOWN = int(os.getenv("VALVE_COOLDOWN", "60"))  # Protects mechanical rotation
 last_run = 0
 
 
@@ -61,7 +62,7 @@ async def temp_monitor():
                             print(f"ALARM: Emergency shutdown — {pump_key} off (temp threshold exceeded).")
         except Exception as e:
             print(f"Watchdog Error: {e}")
-        await asyncio.sleep(60)
+        await asyncio.sleep(TEMP_MONITOR_INTERVAL)
 
 
 async def _enable_aux1_after_delay():
