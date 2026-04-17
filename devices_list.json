@@ -1,0 +1,224 @@
+{
+  "spa_temp": {
+    "type": "IaquaSensor",
+    "state": "",
+    "is_on": null,
+    "label": "Spa Temp"
+  },
+  "pool_temp": {
+    "type": "IaquaSensor",
+    "state": "88",
+    "is_on": null,
+    "label": "Pool Temp"
+  },
+  "air_temp": {
+    "type": "IaquaSensor",
+    "state": "78",
+    "is_on": null,
+    "label": "Air Temp"
+  },
+  "spa_set_point": {
+    "type": "IaquaThermostat",
+    "state": "102",
+    "is_on": false,
+    "label": "Spa Set Point"
+  },
+  "pool_set_point": {
+    "type": "IaquaThermostat",
+    "state": "89",
+    "is_on": true,
+    "label": "Pool Set Point"
+  },
+  "cover_pool": {
+    "type": "IaquaSensor",
+    "state": "",
+    "is_on": null,
+    "label": "Cover Pool"
+  },
+  "freeze_protection": {
+    "type": "IaquaBinarySensor",
+    "state": "0",
+    "is_on": false,
+    "label": "Freeze Protection"
+  },
+  "spa_pump": {
+    "type": "IaquaSwitch",
+    "state": "0",
+    "is_on": false,
+    "label": "Spa Pump"
+  },
+  "pool_pump": {
+    "type": "IaquaSwitch",
+    "state": "1",
+    "is_on": true,
+    "label": "Pool Pump"
+  },
+  "spa_heater": {
+    "type": "IaquaSwitch",
+    "state": "0",
+    "is_on": false,
+    "label": "Spa Heater"
+  },
+  "pool_heater": {
+    "type": "IaquaSwitch",
+    "state": "1",
+    "is_on": true,
+    "label": "Pool Heater"
+  },
+  "solar_heater": {
+    "type": "IaquaSwitch",
+    "state": "",
+    "is_on": false,
+    "label": "Solar Heater"
+  },
+  "spa_salinity": {
+    "type": "IaquaSensor",
+    "state": "",
+    "is_on": null,
+    "label": "Spa Salinity"
+  },
+  "pool_salinity": {
+    "type": "IaquaSensor",
+    "state": "",
+    "is_on": null,
+    "label": "Pool Salinity"
+  },
+  "orp": {
+    "type": "IaquaSensor",
+    "state": "",
+    "is_on": null,
+    "label": "Orp"
+  },
+  "ph": {
+    "type": "IaquaSensor",
+    "state": "",
+    "is_on": null,
+    "label": "Ph"
+  },
+  "is_icl_present": {
+    "type": "IaquaBinarySensor",
+    "state": "absent",
+    "is_on": false,
+    "label": "Is Icl Present"
+  },
+  "relay_count": {
+    "type": "IaquaSensor",
+    "state": "",
+    "is_on": null,
+    "label": "Relay Count"
+  },
+  "aux_1": {
+    "type": "IaquaAuxSwitch",
+    "state": "0",
+    "is_on": false,
+    "label": "Air Blower"
+  },
+  "aux_2": {
+    "type": "IaquaAuxSwitch",
+    "state": "0",
+    "is_on": false,
+    "label": "Aux2"
+  },
+  "aux_3": {
+    "type": "IaquaAuxSwitch",
+    "state": "0",
+    "is_on": false,
+    "label": "Aux3"
+  },
+  "aux_EA": {
+    "type": "IaquaAuxSwitch",
+    "state": "0",
+    "is_on": false,
+    "label": "Extra Aux"
+  }
+}
+
+{
+  "message": "",
+  "onetouch_screen": [
+    {
+      "status": "Online"
+    },
+    {
+      "response": "AQU='71','04 01 02 03 04 00 07 41 6C 6C 20 4F 46 46 00 08 53 70 61 20 4D 6F 64 65 00 0A 43 6C 65 61 6E 20 4D 6F 64 65 00 09 50 6F 6F 6C 20 48 65 61 74'"
+    },
+    {
+      "onetouch_1": [
+        {
+          "status": "1"
+        },
+        {
+          "state": "0"
+        },
+        {
+          "label": "All OFF"
+        }
+      ]
+    },
+    {
+      "onetouch_2": [
+        {
+          "status": "1"
+        },
+        {
+          "state": "0"
+        },
+        {
+          "label": "Spa Mode"
+        }
+      ]
+    },
+    {
+      "onetouch_3": [
+        {
+          "status": "1"
+        },
+        {
+          "state": "0"
+        },
+        {
+          "label": "Clean Mode"
+        }
+      ]
+    },
+    {
+      "onetouch_4": [
+        {
+          "status": "1"
+        },
+        {
+          "state": "0"
+        },
+        {
+          "label": "Pool Heat"
+        }
+      ]
+    },
+    {
+      "onetouch_5": [
+        {
+          "status": "0"
+        },
+        {
+          "state": "0"
+        },
+        {
+          "label": "ONETOUCH 5"
+        }
+      ]
+    },
+    {
+      "onetouch_6": [
+        {
+          "status": "0"
+        },
+        {
+          "state": "0"
+        },
+        {
+          "label": "ONETOUCH 6"
+        }
+      ]
+    }
+  ]
+}

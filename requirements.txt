@@ -1,0 +1,5 @@
+fastapi>=0.136.0
+uvicorn[standard]>=0.44.0
+iaqualink>=0.6.0
+python-dotenv>=1.2.2
+httpx>=0.28.0
