@@ -210,11 +210,14 @@ Railway triggers a deploy on every push to the selected branch. Once deployed, y
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `AQUALINK_EMAIL` | yes | — | iAquaLink account email |
+| `AQUALINK_SPACONTROL_API_KEY` | yes | — | API key required on all requests |
 | `AQUALINK_PASSWORD` | yes | — | iAquaLink account password |
 | `AQUALINK_SERIAL` | no | first system | controller serial number |
 | `TEMP_MONITOR_INTERVAL` | no | 600 | watchdog poll interval (seconds) |
 | `VALVE_COOLDOWN` | no | 60 | lockout between valve commands (seconds) |
 | `BASE_URL` | no | http://127.0.0.1:8000 | target URL for test_tool.py |
+| `PUSHOVER_USER` | no | — | Pushover user key |
+| `PUSHOVER_TOKEN` | no | — | Pushover API token |
 
 ## Safety Notes
 

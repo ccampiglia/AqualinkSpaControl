@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BASE_URL = os.getenv("BASE_URL", "http://127.0.0.1:8000")
+AQUALINK_SPACONTROL_API_KEY = os.getenv("AQUALINK_SPACONTROL_API_KEY")
 
 GET_COMMANDS = {"devices", "onetouch"}
 
@@ -14,9 +15,9 @@ def run_test(action):
     print(f"--- Sending {action} command ---")
     try:
         if action in GET_COMMANDS:
-            r = httpx.get(f"{BASE_URL}/{action}")
+            r = httpx.get(f"{BASE_URL}/{action}", headers={"X-API-Key": AQUALINK_SPACONTROL_API_KEY})
         else:
-            r = httpx.post(f"{BASE_URL}/{action}")
+            r = httpx.post(f"{BASE_URL}/{action}", headers={"X-API-Key": AQUALINK_SPACONTROL_API_KEY})
         print(f"Status Code: {r.status_code}")
         data = r.json()
         if isinstance(data, dict) and "status" in data:
