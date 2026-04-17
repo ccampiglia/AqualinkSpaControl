@@ -92,7 +92,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 
-@app.post("/spa-on")
+@app.api_route("/spa-on", methods=["GET", "POST"])
 async def spa_on(background_tasks: BackgroundTasks):
     global last_run
     if is_locked():
@@ -120,7 +120,7 @@ async def spa_on(background_tasks: BackgroundTasks):
     return {"status": "success", "action": "spa_on", "note": "aux_1 will enable in 30s"}
 
 
-@app.post("/spa-off")
+@app.api_route("/spa-off", methods=["GET", "POST"])
 async def spa_off():
     global last_run
     if is_locked():
@@ -177,7 +177,7 @@ async def get_onetouch():
         return r.json()
 
 
-@app.post("/all-off")
+@app.api_route("/all-off", methods=["GET", "POST"])
 async def all_off():
     async with AqualinkClient(EMAIL, PASSWORD) as client:
         system = await get_system(client)
@@ -185,7 +185,7 @@ async def all_off():
         return {"status": "success", "action": "all_off", "response": r.json()}
 
 
-@app.post("/spa-mode")
+@app.api_route("/spa-mode", methods=["GET", "POST"])
 async def spa_mode():
     async with AqualinkClient(EMAIL, PASSWORD) as client:
         system = await get_system(client)
