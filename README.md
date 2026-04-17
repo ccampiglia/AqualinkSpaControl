@@ -1,6 +1,6 @@
-﻿# AqualinkSpaControl
+# AqualinkSpaControl
 
-A FastAPI microservice that controls a Jandy iAquaLink pool/spa system via the iAquaLink cloud API. Exposes HTTP endpoints for spa/pool control and runs a background safety watchdog that performs an emergency shutdown if either the spa or pool temperature exceeds 110°F.
+A FastAPI microservice that controls a Jandy iAquaLink pool/spa system via the iAquaLink cloud API. Exposes HTTP endpoints for spa/pool control and runs a background safety watchdog that monitors temperatures, triggers emergency shutdowns, and sends Pushover alerts when thresholds are exceeded.
 
 ---
 
@@ -8,8 +8,11 @@ A FastAPI microservice that controls a Jandy iAquaLink pool/spa system via the i
 
 - Spa on/off — toggles spa pump, spa heater, air blower (aux_1), and pool heater in the correct sequence
 - One-touch scene execution — All OFF and Spa Mode via the controller's built-in scenes
-- Safety watchdog — monitors spa and pool temps on a configurable interval (default 600s); shuts off both pumps if either hits 110°F
+- Overheat protection — watchdog shuts everything off and sends a Pushover alert if spa or pool temp exceeds `TEMP_OVERHEAT_THRESHOLD` (default 105°F)
+- Freeze/underheat protection — watchdog turns on pool heater and sends a Pushover alert if spa or pool temp drops below `TEMP_UNDERHEAT_THRESHOLD` (default 80°F)
+- Configurable watchdog interval — poll frequency controlled by `TEMP_MONITOR_INTERVAL` (default 600s)
 - Mechanical cooldown lock — configurable lockout between valve-switching commands to protect the diverter (default 60s)
+- API key authentication — all endpoints require an `X-API-Key` header
 - Debug endpoints — inspect all devices and one-touch scenes at runtime
 
 ---
@@ -27,7 +30,7 @@ A FastAPI microservice that controls a Jandy iAquaLink pool/spa system via the i
 | `uvicorn[standard]` | ASGI server |
 | `iaqualink` | iAquaLink cloud API client |
 | `python-dotenv` | Loads credentials from `.env` |
-| `httpx` | HTTP client (used by `test_tool.py` and `iaqualink`) |
+| `httpx` | HTTP client (Pushover alerts, iaqualink, test_tool.py) |
 
 ---
 
@@ -42,12 +45,20 @@ A FastAPI microservice that controls a Jandy iAquaLink pool/spa system via the i
    ```env
    AQUALINK_EMAIL=your@email.com
    AQUALINK_PASSWORD=yourpassword
+   AQUALINK_SPACONTROL_API_KEY=your-secret-api-key
+
    AQUALINK_SERIAL=your_system_serial_number
+   TEMP_OVERHEAT_THRESHOLD=105
+   TEMP_UNDERHEAT_THRESHOLD=80
    TEMP_MONITOR_INTERVAL=600
    VALVE_COOLDOWN=60
+
+   PUSHOVER_USER=your_pushover_user_key
+   PUSHOVER_TOKEN=your_pushover_api_token
+
    BASE_URL=http://127.0.0.1:8000
    ```
-   All variables except `AQUALINK_EMAIL` and `AQUALINK_PASSWORD` are optional — defaults shown above. `AQUALINK_SERIAL` defaults to the first system on the account if omitted.
+   `AQUALINK_EMAIL`, `AQUALINK_PASSWORD`, and `AQUALINK_SPACONTROL_API_KEY` are required — the server will refuse to start without them. All other variables are optional; defaults are shown above.
 
 3. **Run the server**
    ```bash
@@ -62,16 +73,29 @@ A FastAPI microservice that controls a Jandy iAquaLink pool/spa system via the i
 
 ---
 
+## Authentication
+
+All endpoints require an `X-API-Key` header matching the `AQUALINK_SPACONTROL_API_KEY` environment variable. Requests without a valid key receive a `401 Unauthorized` response.
+
+**Header format:**
+```
+X-API-Key: your-secret-api-key
+```
+
+---
+
 ## API Endpoints
 
 ### Control
 
+All control endpoints accept both `GET` and `POST` for compatibility with browsers and iOS Shortcuts.
+
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/spa-on` | Turns on spa pump + spa heater; turns off pool heater; enables air blower (aux_1) after 30s |
-| `POST` | `/spa-off` | Turns off spa pump + spa heater + air blower; turns on pool heater |
-| `POST` | `/all-off` | Executes one-touch scene 1 — shuts everything off |
-| `POST` | `/spa-mode` | Executes one-touch scene 2 — activates spa mode via controller scene |
+| `GET`/`POST` | `/spa-on` | Turns on spa pump + spa heater; turns off pool heater; enables air blower (aux_1) after 30s |
+| `GET`/`POST` | `/spa-off` | Turns off spa pump + spa heater + air blower; turns on pool heater |
+| `GET`/`POST` | `/all-off` | Executes one-touch scene 1 — shuts everything off |
+| `GET`/`POST` | `/spa-mode` | Executes one-touch scene 2 — activates spa mode via controller scene |
 
 ### Debug / Inspection
 
@@ -90,6 +114,11 @@ A FastAPI microservice that controls a Jandy iAquaLink pool/spa system via the i
 **Cooldown active**
 ```json
 {"status": "ignored", "reason": "Mechanical cooldown in progress"}
+```
+
+**Unauthorized**
+```json
+{"detail": "Invalid API Key"}
 ```
 
 **One-touch — success**
@@ -130,7 +159,7 @@ A FastAPI microservice that controls a Jandy iAquaLink pool/spa system via the i
 
 ## Test Tool
 
-`test_tool.py` is a command-line client for the running server.
+`test_tool.py` is a command-line client for the running server. It reads `BASE_URL` and `AQUALINK_SPACONTROL_API_KEY` from `.env` and sends the API key on every request.
 
 ```bash
 python test_tool.py spa-on
@@ -141,7 +170,7 @@ python test_tool.py devices
 python test_tool.py onetouch
 ```
 
-The target server is controlled by the `BASE_URL` variable in `.env`. Set it to your Railway URL to test against the deployed service:
+Set `BASE_URL` in `.env` to target the Railway deployment:
 
 ```env
 BASE_URL=https://your_domain.up.railway.app
@@ -184,13 +213,18 @@ In the Railway dashboard, go to your service → **Settings → Networking → G
 
 In the Railway dashboard, go to your service → **Variables** and add:
 
-| Variable | Value |
-|---|---|
-| `AQUALINK_EMAIL` | your iAquaLink email |
-| `AQUALINK_PASSWORD` | your iAquaLink password |
-| `AQUALINK_SERIAL` | your controller serial number (optional) |
-| `TEMP_MONITOR_INTERVAL` | watchdog poll interval in seconds (optional, default 600) |
-| `VALVE_COOLDOWN` | cooldown between valve commands in seconds (optional, default 60) |
+| Variable | Required | Notes |
+|---|---|---|
+| `AQUALINK_EMAIL` | yes | iAquaLink account email |
+| `AQUALINK_PASSWORD` | yes | iAquaLink account password |
+| `AQUALINK_SPACONTROL_API_KEY` | yes | Secret key sent in `X-API-Key` header |
+| `AQUALINK_SERIAL` | no | Controller serial; defaults to first system on account |
+| `TEMP_OVERHEAT_THRESHOLD` | no | Default 105 |
+| `TEMP_UNDERHEAT_THRESHOLD` | no | Default 80 |
+| `TEMP_MONITOR_INTERVAL` | no | Default 600 (seconds) |
+| `VALVE_COOLDOWN` | no | Default 60 (seconds) |
+| `PUSHOVER_USER` | no | Pushover user key for alerts |
+| `PUSHOVER_TOKEN` | no | Pushover API token for alerts |
 
 Do **not** commit a `.env` file to the repo.
 
@@ -202,7 +236,6 @@ The `.python-version` file in the repo pins Python 3.14. Railway's Nixpacks buil
 
 Railway triggers a deploy on every push to the selected branch. Once deployed, your public URL will be available in the Railway dashboard.
 
-
 ---
 
 ## Environment Variable Reference
@@ -210,19 +243,24 @@ Railway triggers a deploy on every push to the selected branch. Once deployed, y
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `AQUALINK_EMAIL` | yes | — | iAquaLink account email |
-| `AQUALINK_SPACONTROL_API_KEY` | yes | — | API key required on all requests |
 | `AQUALINK_PASSWORD` | yes | — | iAquaLink account password |
-| `AQUALINK_SERIAL` | no | first system | controller serial number |
-| `TEMP_MONITOR_INTERVAL` | no | 600 | watchdog poll interval (seconds) |
-| `VALVE_COOLDOWN` | no | 60 | lockout between valve commands (seconds) |
-| `BASE_URL` | no | http://127.0.0.1:8000 | target URL for test_tool.py |
+| `AQUALINK_SPACONTROL_API_KEY` | yes | — | API key required on all requests (`X-API-Key` header) |
+| `AQUALINK_SERIAL` | no | first system | Controller serial number |
+| `TEMP_OVERHEAT_THRESHOLD` | no | 105 | Overheat alarm threshold in °F |
+| `TEMP_UNDERHEAT_THRESHOLD` | no | 80 | Underheat/freeze alarm threshold in °F |
+| `TEMP_MONITOR_INTERVAL` | no | 600 | Watchdog poll interval (seconds) |
+| `VALVE_COOLDOWN` | no | 60 | Lockout between valve commands (seconds) |
 | `PUSHOVER_USER` | no | — | Pushover user key |
 | `PUSHOVER_TOKEN` | no | — | Pushover API token |
+| `BASE_URL` | no | http://127.0.0.1:8000 | Target URL for test_tool.py |
+
+---
 
 ## Safety Notes
 
-- The watchdog monitors both `spa_temp` and `pool_temp` on the `TEMP_MONITOR_INTERVAL` schedule. If either reads ≥ 110°F, both `spa_pump` and `pool_pump` are shut off immediately.
-- The `VALVE_COOLDOWN` lockout prevents rapid valve switching that can damage the diverter.
+- **Overheat protection** — the watchdog monitors `spa_temp` and `pool_temp` every `TEMP_MONITOR_INTERVAL` seconds. If either reads ≥ `TEMP_OVERHEAT_THRESHOLD`°F, `set_onetouch_1` (All OFF) is triggered and a Pushover alert is sent. If the scene call fails, pumps are shut off individually as a fallback.
+- **Freeze/underheat protection** — if either sensor reads ≤ `TEMP_UNDERHEAT_THRESHOLD`°F, `set_onetouch_4` (Pool Heat) is triggered and a Pushover alert is sent.
+- **Mechanical cooldown** — `VALVE_COOLDOWN` seconds must elapse between valve-switching commands to protect the diverter.
 - Credentials are never logged or exposed through any API endpoint.
 
 ---
