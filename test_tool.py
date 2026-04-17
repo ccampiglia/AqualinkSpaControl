@@ -1,8 +1,12 @@
 import httpx
+import os
 import sys
 import json
+from dotenv import load_dotenv
 
-BASE_URL = "http://127.0.0.1:8000"
+load_dotenv()
+
+BASE_URL = os.getenv("BASE_URL", "http://127.0.0.1:8000")
 
 GET_COMMANDS = {"devices", "onetouch"}
 
