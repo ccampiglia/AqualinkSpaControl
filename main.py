@@ -11,6 +11,7 @@ load_dotenv()
 EMAIL = os.getenv("AQUALINK_EMAIL")
 PASSWORD = os.getenv("AQUALINK_PASSWORD")
 SERIAL = os.getenv("AQUALINK_SERIAL")
+TEMP_OVERHEAT_THRESHOLD = int(os.getenv("TEMP_OVERHEAT_THRESHOLD", "105"))
 TEMP_MONITOR_INTERVAL = int(os.getenv("TEMP_MONITOR_INTERVAL", "600"))
 VALVE_COOLDOWN = int(os.getenv("VALVE_COOLDOWN", "60"))  # Protects mechanical rotation
 last_run = 0
@@ -51,15 +52,22 @@ async def temp_monitor():
                         print(f"Current {sensor.name}: {sensor.state}F")
 
                 alarm = any(
-                    s and s.state and float(s.state) >= 110
+                    s and s.state and float(s.state) >= TEMP_OVERHEAT_THRESHOLD
                     for s in [temp_sensor_spa, temp_sensor_pool]
                 )
                 if alarm:
-                    for pump_key in ("spa_pump", "pool_pump"):
-                        pump = system.devices.get(pump_key)
-                        if pump and pump.is_on:
-                            await pump.turn_off()
-                            print(f"ALARM: Emergency shutdown — {pump_key} off (temp threshold exceeded).")
+                    r = await system._send_session_request("set_onetouch_1")
+                    if r.status_code == 200:
+                        print({"status": "success", "action": "all_off", "response": r.json()})
+                        print(f"ALARM: Emergency shutdown — ALL-OFF (temp threshold exceeded).")
+                    else:                        
+                        print(f"ALARM: Failed to trigger all-off (temp threshold exceeded). Response: {r.text}")
+                        print("Attempting manual pump shutdown...")
+                        for pump_key in ("spa_pump", "pool_pump"):
+                            pump = system.devices.get(pump_key)
+                            if pump and pump.is_on:
+                                await pump.turn_off()
+                                print(f"ALARM: Emergency shutdown — {pump_key} off (temp threshold exceeded).")
         except Exception as e:
             print(f"Watchdog Error: {e}")
         await asyncio.sleep(TEMP_MONITOR_INTERVAL)
