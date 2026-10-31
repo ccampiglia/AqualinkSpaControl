@@ -1,4 +1,5 @@
 import os
+import secrets
 import time
 import asyncio
 import httpx
@@ -30,7 +31,7 @@ last_run = 0
 
 # Dependency function to validate API key for protected endpoints
 async def get_api_key(api_key: str = Security(api_key_header)):
-    if api_key == AQUALINK_SPACONTROL_API_KEY:
+    if api_key and AQUALINK_SPACONTROL_API_KEY and secrets.compare_digest(api_key.encode(), AQUALINK_SPACONTROL_API_KEY.encode()):
         return api_key
     raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="Invalid API Key")
 
@@ -64,11 +65,15 @@ def is_locked():
 async def send_pushover_alert(message: str) -> None:
     if not PUSHOVER_USER or not PUSHOVER_TOKEN:
         return
-    async with httpx.AsyncClient() as client:
-        await client.post(
-            "https://api.pushover.net/1/messages.json",
-            data={"token": PUSHOVER_TOKEN, "user": PUSHOVER_USER, "message": message},
-        )
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.post(
+                "https://api.pushover.net/1/messages.json",
+                data={"token": PUSHOVER_TOKEN, "user": PUSHOVER_USER, "message": message},
+            )
+            r.raise_for_status()
+    except httpx.HTTPError as e:
+        print(f"Pushover alert failed: {type(e).__name__}")
 
 # Background task to monitor temperatures and trigger alerts/shutdowns based on thresholds
 async def temp_monitor():
