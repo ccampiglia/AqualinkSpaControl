@@ -188,7 +188,8 @@ function render() {
   $("blower-pill").classList.toggle("on", !!status.blower);
   $("blower").textContent = status.blower ? "Turn off" : "Turn on";
   $("blower").classList.toggle("secondary", !!status.blower);
-  $("blower").disabled = busy;
+  // Blower only runs with the spa; still allow turning it off if it's somehow on in pool mode
+  $("blower").disabled = busy || (!on && !status.blower);
 
   // Heater row controls whichever water is in use: spa while it's running, otherwise the pool
   const hk = heaterKind();

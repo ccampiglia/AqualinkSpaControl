@@ -127,7 +127,7 @@ async def _enable_aux1_after_delay() -> None:
         print(f"aux_1 enable error: {e}")
 
 
-# Turns aux_1 (air blower) on or off
+# Turns aux_1 (air blower) on or off; turning it on requires the spa pump to be running
 async def set_aux1(on: bool) -> None:
     async with _command_lock:
         async with AqualinkClient(EMAIL, PASSWORD) as client:
@@ -137,6 +137,8 @@ async def set_aux1(on: bool) -> None:
             aux1 = devices.get("aux_1")
             if aux1 is None:
                 raise RuntimeError("aux_1 not found")
+            if on and not _on(devices.get("spa_pump")):
+                raise ValueError("The blower can only run while the spa is on.")
             if on and not aux1.is_on:
                 await aux1.turn_on()
             elif not on and aux1.is_on:
