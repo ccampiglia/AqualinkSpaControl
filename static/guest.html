@@ -57,11 +57,17 @@
         <button id="spa-on">Spa On</button>
         <button id="spa-off" class="secondary">Spa Off</button>
       </div>
-      <p id="cooldown" class="muted center hidden"></p>
+      <p class="muted center" style="margin:10px 0 0">The pool and spa valves take up to a minute to switch over, so the spa won't start instantly. Press once and give it a minute.</p>
+      <p id="cooldown" class="msg ok center hidden"></p>
 
       <div class="toggle">
-        <div><strong>Blower</strong><br><span class="muted">Air bubbles in the spa</span></div>
+        <div><strong>Blower</strong> <span id="blower-pill" class="pill">—</span><br><span class="muted">Air bubbles in the spa</span></div>
         <button id="blower" class="small">—</button>
+      </div>
+
+      <div class="toggle">
+        <div><strong id="heater-label">Heater</strong> <span id="heater-pill" class="pill">—</span><br><span class="muted" id="heater-sub"></span></div>
+        <button id="heater" class="small">—</button>
       </div>
       <div id="action-msg" class="msg hidden"></div>
     </div>
@@ -166,21 +172,36 @@ function deg(v) { return v === null || v === undefined ? "—" : v + "°"; }
 function render() {
   if (!status) return;
   const on = !!status.spa_pump;
-  $("spa-pill").textContent = on ? (status.spa_heater ? "On · Heating" : "On") : "Off";
+  $("spa-pill").textContent = on ? (status.heater_state.spa === "heating" ? "On · Heating" : "On") : "Off";
   $("spa-pill").classList.toggle("on", on);
   $("t-spa").textContent = deg(status.temps.spa);
   $("t-pool").textContent = deg(status.temps.pool);
   $("t-air").textContent = deg(status.temps.air);
 
-  const cd = status.cooldown_remaining || 0;
+  const cd = cooldownLeft();
   $("spa-on").disabled = busy || cd > 0 || on;
   $("spa-off").disabled = busy || cd > 0 || !on;
   $("cooldown").classList.toggle("hidden", cd === 0);
-  $("cooldown").textContent = `Valves are moving — controls available in ${cd}s.`;
+  $("cooldown").textContent = `Valves are moving into position — spa buttons available again in ${cd}s.`;
 
+  $("blower-pill").textContent = status.blower === null ? "—" : status.blower ? "On" : "Off";
+  $("blower-pill").classList.toggle("on", !!status.blower);
   $("blower").textContent = status.blower ? "Turn off" : "Turn on";
   $("blower").classList.toggle("secondary", !!status.blower);
   $("blower").disabled = busy;
+
+  // Heater row controls whichever water is in use: spa while it's running, otherwise the pool
+  const hk = heaterKind();
+  const hs = status.heater_state[hk];
+  $("heater-label").textContent = hk === "spa" ? "Spa heater" : "Pool heater";
+  $("heater-sub").textContent = hs === "heating" ? "Heating now"
+    : hs === "on" ? "On — idle, water is at the set temperature"
+    : "Off";
+  $("heater-pill").textContent = hs === null ? "—" : hs === "heating" ? "Heating" : hs === "on" ? "On" : "Off";
+  $("heater-pill").classList.toggle("on", hs === "on" || hs === "heating");
+  $("heater").textContent = hs && hs !== "off" ? "Turn off" : "Turn on";
+  $("heater").classList.toggle("secondary", !!hs && hs !== "off");
+  $("heater").disabled = busy || hs === null;
 
   for (const row of document.querySelectorAll(".setpoint")) {
     const kind = row.dataset.kind;
@@ -195,9 +216,26 @@ function render() {
   $("apply-temp").disabled = busy;
 }
 
+// Valve cooldown counts down locally each second so guests can see progress
+let cooldownEnd = 0;
+let cooldownTimer = null;
+function cooldownLeft() { return Math.max(0, Math.ceil((cooldownEnd - Date.now()) / 1000)); }
+function tickCooldown() {
+  if (cooldownTimer) return;
+  cooldownTimer = setInterval(() => {
+    render();
+    if (cooldownLeft() === 0) {
+      clearInterval(cooldownTimer); cooldownTimer = null;
+      refreshStatus();
+    }
+  }, 1000);
+}
+
 async function refreshStatus() {
   try {
     status = await api("status");
+    cooldownEnd = Date.now() + (status.cooldown_remaining || 0) * 1000;
+    if (status.cooldown_remaining) tickCooldown();
     render();
   } catch (e) {
     if (e.message !== "unauthorized") message($("action-msg"), e.message, "error");
@@ -239,9 +277,16 @@ $("login-form").addEventListener("submit", async (e) => {
 });
 
 $("spa-on").addEventListener("click", () =>
-  action("spa-on", {}, "Spa is starting. Heating takes a while — the blower turns on in about 30 seconds.", $("action-msg")));
+  action("spa-on", {}, "Got it! The valves are switching to the spa — it will start within a minute, and the blower follows shortly after. Heating up takes a while longer.", $("action-msg")));
 $("spa-off").addEventListener("click", () =>
   action("spa-off", {}, "Spa is turning off.", $("action-msg")));
+function heaterKind() { return status && status.spa_pump ? "spa" : "pool"; }
+$("heater").addEventListener("click", () => {
+  const kind = heaterKind();
+  const turnOn = status.heater_state[kind] === "off";
+  const name = kind === "spa" ? "Spa heater" : "Pool heater";
+  action("heater", { kind, on: turnOn }, `${name} turning ${turnOn ? "on" : "off"}.`, $("action-msg"));
+});
 $("blower").addEventListener("click", () =>
   action("blower", { on: !status.blower }, status.blower ? "Blower turning off." : "Blower turning on.", $("action-msg")));
 

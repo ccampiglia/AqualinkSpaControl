@@ -138,10 +138,10 @@ async function loadOverview() {
     s.style.color = "var(--text)";
     s.append(
       line("Spa pump", onOff(st.spa_pump)),
-      line("Spa heater", onOff(st.spa_heater)),
+      line("Spa heater", st.heater_state.spa || "—"),
       line("Blower", onOff(st.blower)),
       line("Pool pump", onOff(st.pool_pump)),
-      line("Pool heater", onOff(st.pool_heater)),
+      line("Pool heater", st.heater_state.pool || "—"),
       line("Temps", `spa ${deg(st.temps.spa)} · pool ${deg(st.temps.pool)} · air ${deg(st.temps.air)}`),
       line("Set points", `spa ${deg(st.set_points.spa)} · pool ${deg(st.set_points.pool)}`),
       line("Guest limits", `spa ${st.limits.spa.min}–${st.limits.spa.max} · pool ${st.limits.pool.min}–${st.limits.pool.max}`),

@@ -49,6 +49,13 @@ def _on(device) -> bool | None:
     return bool(device.is_on) if device is not None else None
 
 
+# Heater state from Aqualink: "0" off, "3" enabled (idle at set point), "1" actively heating
+def _heater_state(device) -> str | None:
+    if device is None:
+        return None
+    return {"1": "heating", "3": "on"}.get(str(device.state), "off")
+
+
 # Turns on spa pump + spa heater, turns off pool heater, and enables aux_1 (blower) after 30s
 async def spa_on() -> None:
     global last_run
@@ -137,6 +144,24 @@ async def set_aux1(on: bool) -> None:
         _invalidate_status()
 
 
+# Turns the spa or pool heater on or off
+async def set_heater(kind: str, on: bool) -> None:
+    if kind not in TEMP_LIMITS:
+        raise ValueError(f"Unknown heater: {kind}")
+    async with _command_lock:
+        async with AqualinkClient(EMAIL, PASSWORD) as client:
+            system = await get_system(client)
+            await system.update()
+            heater = system.devices.get(f"{kind}_heater")
+            if heater is None:
+                raise RuntimeError(f"{kind}_heater not found")
+            if on and not heater.is_on:
+                await heater.turn_on()
+            elif not on and heater.is_on:
+                await heater.turn_off()
+        _invalidate_status()
+
+
 # Sets the spa or pool set point, enforcing the configured min/max range
 async def set_temp(kind: str, value: int) -> None:
     if kind not in TEMP_LIMITS:
@@ -171,6 +196,10 @@ async def get_status(force: bool = False) -> dict:
                 "blower": _on(d.get("aux_1")),
                 "pool_pump": _on(d.get("pool_pump")),
                 "pool_heater": _on(d.get("pool_heater")),
+                "heater_state": {
+                    "spa": _heater_state(d.get("spa_heater")),
+                    "pool": _heater_state(d.get("pool_heater")),
+                },
                 "temps": {
                     "spa": _temp(d.get("spa_temp")),
                     "pool": _temp(d.get("pool_temp")),

@@ -20,6 +20,11 @@ class BlowerBody(BaseModel):
     on: bool
 
 
+class HeaterBody(BaseModel):
+    kind: str
+    on: bool
+
+
 class TempBody(BaseModel):
     kind: str
     value: int
@@ -127,6 +132,12 @@ async def guest_spa_off(request: Request, booking: dict = Depends(auth.require_g
 @router.post("/api/blower")
 async def guest_blower(body: BlowerBody, request: Request, booking: dict = Depends(auth.require_guest)):
     return await _run(request, booking, "blower_on" if body.on else "blower_off", spa.set_aux1(body.on))
+
+
+@router.post("/api/heater")
+async def guest_heater(body: HeaterBody, request: Request, booking: dict = Depends(auth.require_guest)):
+    action = f"{body.kind}_heater_{'on' if body.on else 'off'}"
+    return await _run(request, booking, action, spa.set_heater(body.kind, body.on))
 
 
 @router.post("/api/temp")
