@@ -112,6 +112,21 @@ Requires `LODGIFY_API_KEY`; returns `503` if not set, `502` if Lodgify returns a
 |---|---|---|
 | `GET` | `/lodgify/bookings?page=1&size=50&stay_filter=Current` | Lists Lodgify bookings (`GET /v2/reservations/bookings`) |
 
+### Guest spa portal — `/guest`
+
+A mobile web page guests use instead of the Leviton switch (no IFTTT in the path). The root URL `/` redirects here, so a QR code to the domain works.
+
+- **Login:** the guest enters their 4-digit door code. It's matched against `rooms[].key_code` on the current Lodgify booking (`stayFilter=Current`).
+- **Access window:** from the arrival date until the departure date at `check_out.time`, in `PROPERTY_TIMEZONE`. Update the checkout time in Lodgify for a late checkout and access extends automatically (within ~60s).
+- **Every action re-checks Lodgify**, so a cancelled booking or changed door code stops working right away.
+- **Controls:** spa on/off (same logic and `VALVE_COOLDOWN` as `/spa-on`/`/spa-off`), blower (aux_1), spa/pool set points limited to `SPA_TEMP_*` / `POOL_TEMP_*`, and live spa/pool/air temperatures.
+- **Brute-force protection:** 5 wrong codes from one IP → 15-minute lockout; 30 wrong codes in an hour from anywhere → guest login disabled for 1 hour. Both send a Pushover alert and can be cleared from the admin page.
+- Pushover alert on each successful guest login.
+
+### Admin activity page — `/admin`
+
+Password login (`ADMIN_PASSWORD`). Shows the current booking (door code masked), live spa status, active lockouts (with Clear), and an activity log of guest logins/failures, lockouts, guest actions, owner API calls, watchdog alarms and admin logins. Events are stored in SQLite at `EVENT_DB_PATH` and kept for 90 days.
+
 ### Response examples
 
 **Spa on/off — success**
@@ -208,10 +223,10 @@ The `railway.toml` in the repo root configures the start command automatically:
 
 ```toml
 [deploy]
-startCommand = "uvicorn main:app --host 0.0.0.0 --port $PORT"
+startCommand = "uvicorn main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'"
 ```
 
-Railway injects `$PORT` — no additional configuration needed.
+Railway injects `$PORT` — no additional configuration needed. `--proxy-headers` makes the real client IP visible to the app (needed for guest login lockouts and the activity log).
 
 ### 4. Generate a public URL
 
@@ -233,9 +248,22 @@ In the Railway dashboard, go to your service → **Variables** and add:
 | `VALVE_COOLDOWN` | no | Default 60 (seconds) |
 | `PUSHOVER_USER` | no | Pushover user key for alerts |
 | `PUSHOVER_TOKEN` | no | Pushover API token for alerts |
-| `LODGIFY_API_KEY` | no | Lodgify public API key (enables `/lodgify/*`) |
+| `LODGIFY_API_KEY` | no | Lodgify public API key (enables `/lodgify/*` and `/guest`) |
+| `SESSION_SECRET` | for /guest, /admin | Long random string for signing login cookies |
+| `ADMIN_PASSWORD` | for /admin | Admin activity page password |
+| `EVENT_DB_PATH` | recommended | `/data/events.db` (see volume below) |
+| `SPA_TEMP_MIN` / `SPA_TEMP_MAX` | no | Guest spa set-point range, default 90–102 |
+| `POOL_TEMP_MIN` / `POOL_TEMP_MAX` | no | Guest pool set-point range, default 82–90 |
+| `PROPERTY_TIMEZONE` | no | Default `America/New_York` |
 
 Do **not** commit a `.env` file to the repo.
+
+**Event log volume:** Railway's filesystem is wiped on every deploy. To keep the admin activity history, add a volume to the service (**right-click the service → Attach Volume**) mounted at `/data`, and set `EVENT_DB_PATH=/data/events.db`.
+
+Generate a `SESSION_SECRET` with:
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
 
 ### 6. Python version
 
@@ -261,7 +289,17 @@ Railway triggers a deploy on every push to the selected branch. Once deployed, y
 | `VALVE_COOLDOWN` | no | 60 | Lockout between valve commands (seconds) |
 | `PUSHOVER_USER` | no | — | Pushover user key |
 | `PUSHOVER_TOKEN` | no | — | Pushover API token |
-| `LODGIFY_API_KEY` | no | — | Lodgify public API key (`X-ApiKey`); enables `/lodgify/*` endpoints |
+| `LODGIFY_API_KEY` | no | — | Lodgify public API key (`X-ApiKey`); enables `/lodgify/*` and the guest portal |
+| `SESSION_SECRET` | for /guest, /admin | — | Secret for signing login cookies (32+ random chars) |
+| `ADMIN_PASSWORD` | for /admin | — | Admin activity page password |
+| `SPA_TEMP_MIN` | no | 90 | Lowest spa set point a guest can choose (°F) |
+| `SPA_TEMP_MAX` | no | 102 | Highest spa set point a guest can choose — must be ≤ 104 and below `TEMP_OVERHEAT_THRESHOLD` |
+| `POOL_TEMP_MIN` | no | 82 | Lowest pool set point a guest can choose (°F) |
+| `POOL_TEMP_MAX` | no | 90 | Highest pool set point a guest can choose — same limits as spa |
+| `PROPERTY_TIMEZONE` | no | America/New_York | Timezone for arrival/checkout times |
+| `EVENT_DB_PATH` | no | ./data/events.db | SQLite activity log location |
+| `BOOKING_SITE_URL` | no | https://sunshinevilladeerfield.com/ | "Book direct" link on the guest page |
+| `COOKIE_SECURE` | no | true | Set `false` only for local testing over plain http |
 | `BASE_URL` | no | http://127.0.0.1:8000 | Target URL for test_tool.py |
 
 ---

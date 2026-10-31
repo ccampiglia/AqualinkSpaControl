@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#0c423c">
+  <title>Spa Control · Sunshine Villa</title>
+  <link rel="icon" type="image/png" href="/static/brand/favicon.png">
+  <link rel="apple-touch-icon" href="/static/brand/logo.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Raleway:wght@400;700&family=Rosario:wght@400;700&family=Rouge+Script&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/theme.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">
+    <img src="/static/brand/logo.png" alt="Sunshine Villa, Deerfield Beach FL">
+  </div>
+
+  <!-- Login -->
+  <section id="login" class="card hidden">
+    <h1 class="center">Spa Control</h1>
+    <p class="muted center">Enter your 4-digit door code to control the spa during your stay.</p>
+    <form id="login-form" autocomplete="off">
+      <input id="pin" class="pin" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" required aria-label="Door code">
+      <p></p>
+      <button type="submit" class="full" id="login-btn">Unlock</button>
+    </form>
+    <div id="login-msg" class="msg error hidden"></div>
+  </section>
+
+  <!-- Dashboard -->
+  <section id="dash" class="hidden">
+    <div class="card">
+      <p class="script center" style="margin:0">Welcome</p>
+      <h1 class="center" id="welcome"></h1>
+      <p class="center muted" id="stay"></p>
+      <p class="center" id="checkout" style="margin:0"></p>
+    </div>
+
+    <div class="card">
+      <div class="row" style="align-items:center">
+        <h2 style="margin:0">Spa</h2>
+        <div style="text-align:right"><span id="spa-pill" class="pill">—</span></div>
+      </div>
+
+      <div class="tiles">
+        <div class="tile"><div class="label">Spa</div><div class="value" id="t-spa">—</div></div>
+        <div class="tile"><div class="label">Pool</div><div class="value" id="t-pool">—</div></div>
+        <div class="tile"><div class="label">Air</div><div class="value" id="t-air">—</div></div>
+      </div>
+      <p class="muted" style="margin-top:-6px">Water temperatures update while the pumps are running.</p>
+
+      <div class="row">
+        <button id="spa-on">Spa On</button>
+        <button id="spa-off" class="secondary">Spa Off</button>
+      </div>
+      <p id="cooldown" class="muted center hidden"></p>
+
+      <div class="toggle">
+        <div><strong>Blower</strong><br><span class="muted">Air bubbles in the spa</span></div>
+        <button id="blower" class="small">—</button>
+      </div>
+      <div id="action-msg" class="msg hidden"></div>
+    </div>
+
+    <div class="card">
+      <h2>Temperature settings</h2>
+      <div class="setpoint" data-kind="spa">
+        <div><strong>Spa</strong><br><span class="muted range"></span></div>
+        <div class="stepper">
+          <button class="minus" aria-label="Lower spa temperature">−</button>
+          <span class="val">—</span>
+          <button class="plus" aria-label="Raise spa temperature">+</button>
+        </div>
+      </div>
+      <div class="setpoint" data-kind="pool">
+        <div><strong>Pool</strong><br><span class="muted range"></span></div>
+        <div class="stepper">
+          <button class="minus" aria-label="Lower pool temperature">−</button>
+          <span class="val">—</span>
+          <button class="plus" aria-label="Raise pool temperature">+</button>
+        </div>
+      </div>
+      <button id="apply-temp" class="full hidden" style="margin-top:12px">Save temperature</button>
+      <div id="temp-msg" class="msg hidden"></div>
+    </div>
+
+    <div class="card promo">
+      <p class="script" style="color:var(--gold);margin:0">Come back soon</p>
+      <h2>Book your next trip direct with us</h2>
+      <p>Plan your return visit to Sunshine Villa on our website.</p>
+      <a id="book-link" class="btn" href="https://sunshinevilladeerfield.com/" target="_blank" rel="noopener">Visit sunshinevilladeerfield.com</a>
+    </div>
+
+    <p class="center"><button id="logout" class="ghost">Log out</button></p>
+  </section>
+
+  <!-- Stay ended / unavailable -->
+  <section id="ended" class="card center hidden">
+    <h1>Thanks for staying with us!</h1>
+    <p class="muted" id="ended-text">Spa control is available to current guests during their stay.</p>
+    <a class="btn" href="https://sunshinevilladeerfield.com/" target="_blank" rel="noopener">Book your next trip direct with us</a>
+    <p><button class="ghost" onclick="show('login')">Enter a door code</button></p>
+  </section>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let status = null;
+let pending = {};          // set points the guest has changed but not saved yet
+let tz = undefined;
+let pollTimer = null;
+
+function show(view) {
+  for (const v of ["login", "dash", "ended"]) $(v).classList.toggle("hidden", v !== view);
+  if (view === "login") setTimeout(() => $("pin").focus(), 50);
+}
+
+function message(el, text, kind) {
+  el.textContent = text;
+  el.className = "msg " + kind;
+  if (kind === "ok") setTimeout(() => el.classList.add("hidden"), 4000);
+}
+
+async function api(path, body) {
+  const opts = body === undefined
+    ? { credentials: "same-origin" }
+    : { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
+  const r = await fetch("/guest/api/" + path, opts);
+  let data = {};
+  try { data = await r.json(); } catch (_) {}
+  if (r.status === 401 && path !== "login") {
+    stopPolling();
+    if (data.detail === "stay_ended") show("ended"); else show("login");
+    throw new Error("unauthorized");
+  }
+  if (!r.ok) throw new Error(typeof data.detail === "string" ? data.detail : "Something went wrong. Please try again.");
+  return data;
+}
+
+function fmtDate(iso) {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+}
+
+async function loadDashboard() {
+  const me = await api("me");
+  tz = me.timezone;
+  $("welcome").textContent = me.first_name;
+  $("stay").textContent = `${fmtDate(me.arrival)} – ${fmtDate(me.departure)}` + (me.guests ? ` · ${me.guests} guests` : "");
+  const co = new Date(me.checkout);
+  $("checkout").textContent = "Spa access until checkout: " + co.toLocaleString(undefined, {
+    timeZone: tz, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+  });
+  for (const a of document.querySelectorAll("#book-link, #ended a.btn")) a.href = me.booking_site_url;
+  show("dash");
+  await refreshStatus();
+  startPolling();
+}
+
+function deg(v) { return v === null || v === undefined ? "—" : v + "°"; }
+
+function render() {
+  if (!status) return;
+  const on = !!status.spa_pump;
+  $("spa-pill").textContent = on ? (status.spa_heater ? "On · Heating" : "On") : "Off";
+  $("spa-pill").classList.toggle("on", on);
+  $("t-spa").textContent = deg(status.temps.spa);
+  $("t-pool").textContent = deg(status.temps.pool);
+  $("t-air").textContent = deg(status.temps.air);
+
+  const cd = status.cooldown_remaining || 0;
+  $("spa-on").disabled = busy || cd > 0 || on;
+  $("spa-off").disabled = busy || cd > 0 || !on;
+  $("cooldown").classList.toggle("hidden", cd === 0);
+  $("cooldown").textContent = `Valves are moving — controls available in ${cd}s.`;
+
+  $("blower").textContent = status.blower ? "Turn off" : "Turn on";
+  $("blower").classList.toggle("secondary", !!status.blower);
+  $("blower").disabled = busy;
+
+  for (const row of document.querySelectorAll(".setpoint")) {
+    const kind = row.dataset.kind;
+    const lim = status.limits[kind];
+    const val = pending[kind] ?? status.set_points[kind];
+    row.querySelector(".range").textContent = `${lim.min}–${lim.max}°F`;
+    row.querySelector(".val").textContent = deg(val);
+    row.querySelector(".minus").disabled = busy || val === null || val <= lim.min;
+    row.querySelector(".plus").disabled = busy || val === null || val >= lim.max;
+  }
+  $("apply-temp").classList.toggle("hidden", Object.keys(pending).length === 0);
+  $("apply-temp").disabled = busy;
+}
+
+async function refreshStatus() {
+  try {
+    status = await api("status");
+    render();
+  } catch (e) {
+    if (e.message !== "unauthorized") message($("action-msg"), e.message, "error");
+  }
+}
+
+function startPolling() { stopPolling(); pollTimer = setInterval(refreshStatus, 30000); }
+function stopPolling() { if (pollTimer) clearInterval(pollTimer); pollTimer = null; }
+
+let busy = false;
+async function action(path, body, okText, msgEl) {
+  busy = true; render();
+  try {
+    await api(path, body);
+    message(msgEl, okText, "ok");
+  } catch (e) {
+    if (e.message !== "unauthorized") message(msgEl, e.message, "error");
+  } finally {
+    busy = false;
+    await refreshStatus();
+  }
+}
+
+$("login-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const pin = $("pin").value.trim();
+  $("login-msg").classList.add("hidden");
+  if (!/^\d{4}$/.test(pin)) { message($("login-msg"), "Please enter your 4-digit door code.", "error"); return; }
+  $("login-btn").disabled = true;
+  try {
+    await api("login", { pin });
+    $("pin").value = "";
+    await loadDashboard();
+  } catch (err) {
+    message($("login-msg"), err.message, "error");
+  } finally {
+    $("login-btn").disabled = false;
+  }
+});
+
+$("spa-on").addEventListener("click", () =>
+  action("spa-on", {}, "Spa is starting. Heating takes a while — the blower turns on in about 30 seconds.", $("action-msg")));
+$("spa-off").addEventListener("click", () =>
+  action("spa-off", {}, "Spa is turning off.", $("action-msg")));
+$("blower").addEventListener("click", () =>
+  action("blower", { on: !status.blower }, status.blower ? "Blower turning off." : "Blower turning on.", $("action-msg")));
+
+for (const row of document.querySelectorAll(".setpoint")) {
+  const kind = row.dataset.kind;
+  const step = (d) => {
+    const lim = status.limits[kind];
+    const cur = pending[kind] ?? status.set_points[kind] ?? lim.min;
+    const next = Math.min(lim.max, Math.max(lim.min, cur + d));
+    if (next === status.set_points[kind]) delete pending[kind]; else pending[kind] = next;
+    render();
+  };
+  row.querySelector(".minus").addEventListener("click", () => step(-1));
+  row.querySelector(".plus").addEventListener("click", () => step(1));
+}
+
+$("apply-temp").addEventListener("click", async () => {
+  const changes = Object.entries(pending);
+  pending = {};
+  for (const [kind, value] of changes) {
+    await action("temp", { kind, value }, "Temperature saved.", $("temp-msg"));
+  }
+});
+
+$("logout").addEventListener("click", async () => {
+  stopPolling();
+  try { await api("logout", {}); } catch (_) {}
+  show("login");
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && !$("dash").classList.contains("hidden")) refreshStatus();
+});
+
+// Start: use the existing session if there is one, otherwise show the login form
+loadDashboard().catch((e) => {
+  if (e.message !== "unauthorized") { show("login"); message($("login-msg"), e.message, "error"); }
+});
+</script>
+</body>
+</html>

@@ -1,35 +1,28 @@
-import os
 import secrets
-import time
 import asyncio
 import httpx
+from pathlib import Path
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, BackgroundTasks, HTTPException, Security, Depends
+from fastapi import FastAPI, HTTPException, Request, Security, Depends
+from fastapi.responses import RedirectResponse
 from fastapi.security.api_key import APIKeyHeader
+from fastapi.staticfiles import StaticFiles
 from starlette.status import HTTP_401_UNAUTHORIZED
 from iaqualink.client import AqualinkClient
-from dotenv import load_dotenv
 from lodgify import LodgifyClient, LodgifyError
-
-load_dotenv()
+from config import (
+    EMAIL, PASSWORD, TEMP_OVERHEAT_THRESHOLD, TEMP_UNDERHEAT_THRESHOLD, TEMP_MONITOR_INTERVAL,
+    AQUALINK_SPACONTROL_API_KEY, LODGIFY_API_KEY, validate_env, send_pushover_alert,
+)
+import admin
+import events
+import guest
+import spa
+from spa import get_system
 
 #Define the header name for API key authentication
 API_KEY_NAME = "X-API-KEY"
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
-
-# Load environment variables
-EMAIL = os.getenv("AQUALINK_EMAIL")
-PASSWORD = os.getenv("AQUALINK_PASSWORD")
-SERIAL = os.getenv("AQUALINK_SERIAL")
-TEMP_OVERHEAT_THRESHOLD = int(os.getenv("TEMP_OVERHEAT_THRESHOLD", "105"))
-TEMP_UNDERHEAT_THRESHOLD = int(os.getenv("TEMP_UNDERHEAT_THRESHOLD", "80"))
-TEMP_MONITOR_INTERVAL = int(os.getenv("TEMP_MONITOR_INTERVAL", "600"))
-VALVE_COOLDOWN = int(os.getenv("VALVE_COOLDOWN", "60"))  # Protects mechanical rotation
-PUSHOVER_USER = os.getenv("PUSHOVER_USER")
-PUSHOVER_TOKEN = os.getenv("PUSHOVER_TOKEN")
-AQUALINK_SPACONTROL_API_KEY = os.getenv("AQUALINK_SPACONTROL_API_KEY")
-LODGIFY_API_KEY = os.getenv("LODGIFY_API_KEY")
-last_run = 0
 
 # Dependency function to validate API key for protected endpoints
 async def get_api_key(api_key: str = Security(api_key_header)):
@@ -37,47 +30,8 @@ async def get_api_key(api_key: str = Security(api_key_header)):
         return api_key
     raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="Invalid API Key")
 
-
-# Helper function to validate required environment variables at startup
-def _validate_env() -> None:
-    missing = [k for k, v in {
-        "AQUALINK_EMAIL": EMAIL,
-        "AQUALINK_PASSWORD": PASSWORD,
-        "AQUALINK_SPACONTROL_API_KEY": AQUALINK_SPACONTROL_API_KEY,
-    }.items() if not v]
-    if missing:
-        raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
-    if not LODGIFY_API_KEY:
-        print("LODGIFY_API_KEY not set — /lodgify endpoints disabled.")
-
-# Helper function to retrieve the Aqualink system, either by specified serial or defaulting to the first available
-async def get_system(client):
-    systems = await client.get_systems()
-    if not systems:
-        raise RuntimeError("No iAquaLink systems found for this account.")
-    print(f"Found systems: {list(systems.keys())}")
-    return systems.get(SERIAL) or list(systems.values())[0]
-
-# Helper function to check if we're in a cooldown period after a recent spa on/off command
-def is_locked():
-    """Check if the system is in a mechanical cooldown period."""
-    global last_run
-    print(f"Checking cooldown: last run at {last_run}, current time {time.time()}")
-    return (time.time() - last_run) < VALVE_COOLDOWN
-
-# Function to send Pushover alerts for overheat/underheat conditions
-async def send_pushover_alert(message: str) -> None:
-    if not PUSHOVER_USER or not PUSHOVER_TOKEN:
-        return
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await client.post(
-                "https://api.pushover.net/1/messages.json",
-                data={"token": PUSHOVER_TOKEN, "user": PUSHOVER_USER, "message": message},
-            )
-            r.raise_for_status()
-    except httpx.HTTPError as e:
-        print(f"Pushover alert failed: {type(e).__name__}")
+def _ip(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
 
 # Background task to monitor temperatures and trigger alerts/shutdowns based on thresholds
 async def temp_monitor():
@@ -97,20 +51,21 @@ async def temp_monitor():
                         print(f"Current {sensor.name}: {sensor.state}F")
 
                 alarm_overheat = any(
-                    s and s.state and float(s.state) >= TEMP_OVERHEAT_THRESHOLD 
+                    s and s.state and float(s.state) >= TEMP_OVERHEAT_THRESHOLD
                     for s in [temp_sensor_spa, temp_sensor_pool]
                 )
                 alarm_underheat = any(
-                    s and s.state and float(s.state) <= TEMP_UNDERHEAT_THRESHOLD 
+                    s and s.state and float(s.state) <= TEMP_UNDERHEAT_THRESHOLD
                     for s in [temp_sensor_spa, temp_sensor_pool]
                 )
                 if alarm_overheat:
-                    await send_pushover_alert(f"ALARM: Pool/spa temp exceeded {TEMP_OVERHEAT_THRESHOLD}\u00b0F \u2014 emergency all-off triggered.")
+                    events.log_event("watchdog_overheat", "watchdog", detail={"threshold": TEMP_OVERHEAT_THRESHOLD})
+                    await send_pushover_alert(f"ALARM: Pool/spa temp exceeded {TEMP_OVERHEAT_THRESHOLD}°F — emergency all-off triggered.")
                     r = await system._send_session_request("set_onetouch_1")
                     if r.status_code == 200:
                         print({"status": "success", "action": "all_off", "response": r.json()})
                         print(f"ALARM: Emergency shutdown — ALL-OFF (temp threshold exceeded).")
-                    else:                        
+                    else:
                         print(f"ALARM: Failed to trigger all-off (temp threshold exceeded). Response: {r.text}")
                         print("Attempting manual pump shutdown...")
                         for pump_key in ("spa_pump", "pool_pump"):
@@ -119,8 +74,9 @@ async def temp_monitor():
                                 await pump.turn_off()
                                 print(f"ALARM: Emergency shutdown — {pump_key} off (temp threshold exceeded).")
                 elif alarm_underheat:
-                    await send_pushover_alert(f"ALERT: Pool/spa temp dropped below {TEMP_UNDERHEAT_THRESHOLD}\u00b0F \u2014 Check heating system.")
-                    print(f"ALERT: Pool/spa temp dropped below {TEMP_UNDERHEAT_THRESHOLD}\u00b0F \u2014 Check heating system.")
+                    events.log_event("watchdog_underheat", "watchdog", detail={"threshold": TEMP_UNDERHEAT_THRESHOLD})
+                    await send_pushover_alert(f"ALERT: Pool/spa temp dropped below {TEMP_UNDERHEAT_THRESHOLD}°F — Check heating system.")
+                    print(f"ALERT: Pool/spa temp dropped below {TEMP_UNDERHEAT_THRESHOLD}°F — Check heating system.")
                     r = await system._send_session_request("set_onetouch_4") #Turn on pool heater only
                     if r.status_code == 200:
                         print({"status": "success", "action": "pool_heater_on", "response": r.json()})
@@ -132,90 +88,44 @@ async def temp_monitor():
             print(f"Watchdog Error: {e}")
         await asyncio.sleep(TEMP_MONITOR_INTERVAL)
 
-# Background task to enable aux_1 after a delay when spa is turned on
-async def _enable_aux1_after_delay():
-    """Turns on aux_1 after a 30-second delay — runs as a background task after spa-on."""
-    await asyncio.sleep(30)
-    try:
-        async with AqualinkClient(EMAIL, PASSWORD) as client:
-            system = await get_system(client)
-            await system.update()
-            devices = await system.get_devices()
-            aux1 = devices.get("aux_1")
-            if aux1 and not aux1.is_on:
-                await aux1.turn_on()
-                print("aux_1 enabled (30s post spa-on delay).")
-    except Exception as e:
-        print(f"aux_1 enable error: {e}")
-
 # FastAPI lifespan context to manage startup/shutdown tasks, including environment validation and starting the temperature monitor
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    _validate_env()
+    validate_env()
+    events.init_db()
     task = asyncio.create_task(temp_monitor())
     yield
     task.cancel()
 
 # Initialize FastAPI app with lifespan context for startup/shutdown management
 app = FastAPI(lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
+app.include_router(guest.router)
+app.include_router(admin.router)
+
+# Root URL sends guests to the spa portal (handy for QR codes)
+@app.get("/", include_in_schema=False)
+async def root():
+    return RedirectResponse("/guest")
 
 # Define API endpoints with authentication and device control logic
 @app.api_route("/spa-on", methods=["GET", "POST"], dependencies=[Depends(get_api_key)])
-async def spa_on(background_tasks: BackgroundTasks):
-    global last_run
-    if is_locked():
+async def spa_on(request: Request):
+    try:
+        await spa.spa_on()
+    except spa.CooldownError:
         return {"status": "ignored", "reason": "Mechanical cooldown in progress"}
-
-    async with AqualinkClient(EMAIL, PASSWORD) as client:
-        system = await get_system(client)
-        await system.update()
-        devices = await system.get_devices()
-
-        spa = devices.get("spa_pump")
-        if spa and not spa.is_on:
-            await spa.turn_on()
-
-        heater = devices.get("spa_heater")
-        if heater and not heater.is_on:
-            await heater.turn_on()
-
-        pool_heater = devices.get("pool_heater")
-        if pool_heater and pool_heater.is_on:
-            await pool_heater.turn_off()
-
-    last_run = time.time()
-    background_tasks.add_task(_enable_aux1_after_delay)
+    events.log_event("api_spa_on", "api", _ip(request))
     return {"status": "success", "action": "spa_on", "note": "aux_1 will enable in 30s"}
 
 # Endpoint to turn off spa and related devices, with cooldown protection and pool heater fallback
 @app.api_route("/spa-off", methods=["GET", "POST"], dependencies=[Depends(get_api_key)])
-async def spa_off():
-    global last_run
-    if is_locked():
+async def spa_off(request: Request):
+    try:
+        await spa.spa_off()
+    except spa.CooldownError:
         return {"status": "ignored", "reason": "Mechanical cooldown in progress"}
-
-    async with AqualinkClient(EMAIL, PASSWORD) as client:
-        system = await get_system(client)
-        await system.update()
-        devices = await system.get_devices()
-
-        spa = devices.get("spa_pump")
-        if spa and spa.is_on:
-            await spa.turn_off()
-
-        spa_heater = devices.get("spa_heater")
-        if spa_heater and spa_heater.is_on:
-            await spa_heater.turn_off()
-
-        aux1 = devices.get("aux_1")
-        if aux1 and aux1.is_on:
-            await aux1.turn_off()
-
-        pool_heater = devices.get("pool_heater")
-        if pool_heater and not pool_heater.is_on:
-            await pool_heater.turn_on()
-
-    last_run = time.time()
+    events.log_event("api_spa_off", "api", _ip(request))
     return {"status": "success", "action": "spa_off"}
 
 # Endpoint to list all devices with their current state and type information
@@ -246,18 +156,20 @@ async def get_onetouch():
 
 # Endpoint to trigger the "all off" one-touch command, which turns off all pumps and heaters immediately
 @app.api_route("/all-off", methods=["GET", "POST"], dependencies=[Depends(get_api_key)])
-async def all_off():
+async def all_off(request: Request):
     async with AqualinkClient(EMAIL, PASSWORD) as client:
         system = await get_system(client)
         r = await system._send_session_request("set_onetouch_1")
+        events.log_event("api_all_off", "api", _ip(request))
         return {"status": "success", "action": "all_off", "response": r.json()}
 
 # Endpoint to trigger the "spa mode" one-touch command, which typically turns on the spa pump and heater and turns off the pool heater
 @app.api_route("/spa-mode", methods=["GET", "POST"], dependencies=[Depends(get_api_key)])
-async def spa_mode():
+async def spa_mode(request: Request):
     async with AqualinkClient(EMAIL, PASSWORD) as client:
         system = await get_system(client)
         r = await system._send_session_request("set_onetouch_2")
+        events.log_event("api_spa_mode", "api", _ip(request))
         return {"status": "success", "action": "spa_mode", "response": r.json()}
 
 # Endpoint to list Lodgify bookings (GET /v2/reservations/bookings)

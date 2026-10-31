@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Spa Admin · Sunshine Villa</title>
+  <link rel="icon" type="image/png" href="/static/brand/favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Raleway:wght@400;700&family=Rosario:wght@400;700&family=Rouge+Script&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/theme.css">
+</head>
+<body>
+<div class="wrap wide">
+
+  <section id="login" class="card hidden" style="max-width:420px;margin:40px auto">
+    <div class="brand"><img src="/static/brand/logo.png" alt="Sunshine Villa" style="width:100px;height:100px"></div>
+    <h1 class="center">Spa Admin</h1>
+    <form id="login-form">
+      <input id="password" type="password" autocomplete="current-password" placeholder="Admin password" required>
+      <p></p>
+      <button type="submit" class="full">Log in</button>
+    </form>
+    <div id="login-msg" class="msg error hidden"></div>
+  </section>
+
+  <section id="dash" class="hidden">
+    <div class="row" style="align-items:center;margin-bottom:12px">
+      <h1 style="margin:0">Spa Admin <span class="script" style="font-size:1.4rem">Sunshine Villa</span></h1>
+      <div style="text-align:right;flex:0">
+        <button class="small" id="refresh">Refresh</button>
+      </div>
+      <div style="text-align:right;flex:0"><button class="ghost" id="logout">Log out</button></div>
+    </div>
+
+    <div class="row" style="flex-wrap:wrap;align-items:stretch">
+      <div class="card" style="min-width:280px">
+        <h2>Current booking</h2>
+        <div id="bookings" class="muted">Loading…</div>
+      </div>
+      <div class="card" style="min-width:280px">
+        <h2>Spa status</h2>
+        <div id="status" class="muted">Loading…</div>
+      </div>
+      <div class="card" style="min-width:280px">
+        <h2>Active lockouts</h2>
+        <div id="lockouts" class="muted">Loading…</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row" style="align-items:center">
+        <h2 style="margin:0">Activity</h2>
+        <div style="text-align:right">
+          <select id="type-filter"><option value="">All events</option></select>
+        </div>
+      </div>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th>Time</th><th>Event</th><th>Who</th><th>IP</th><th>Detail</th></tr></thead>
+          <tbody id="events"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+function show(view) {
+  $("login").classList.toggle("hidden", view !== "login");
+  $("dash").classList.toggle("hidden", view !== "dash");
+}
+
+async function api(path, body) {
+  const opts = body === undefined
+    ? { credentials: "same-origin" }
+    : { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
+  const r = await fetch("/admin/api/" + path, opts);
+  let data = {};
+  try { data = await r.json(); } catch (_) {}
+  if (r.status === 401 && path !== "login") { show("login"); throw new Error("unauthorized"); }
+  if (!r.ok) throw new Error(typeof data.detail === "string" ? data.detail : `Error ${r.status}`);
+  return data;
+}
+
+// Builds an element safely (all values go in as text, never HTML)
+function el(tag, text, cls) {
+  const e = document.createElement(tag);
+  if (text !== undefined && text !== null) e.textContent = text;
+  if (cls) e.className = cls;
+  return e;
+}
+
+function line(label, value) {
+  const p = el("div");
+  p.append(el("strong", label + ": "), document.createTextNode(value));
+  return p;
+}
+
+function fmtTs(ts) {
+  return new Date(ts * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit" });
+}
+
+function onOff(v) { return v === null || v === undefined ? "—" : v ? "ON" : "off"; }
+function deg(v) { return v === null || v === undefined ? "—" : v + "°F"; }
+
+async function loadOverview() {
+  const o = await api("overview");
+
+  const b = $("bookings");
+  b.replaceChildren();
+  if (o.booking_error) b.append(el("div", o.booking_error, "msg error"));
+  if (!o.guest_portal_enabled) b.append(el("div", "Guest portal disabled (SESSION_SECRET or LODGIFY_API_KEY missing).", "msg error"));
+  if (!o.bookings.length && !o.booking_error) b.append(el("div", "No current booking."));
+  for (const bk of o.bookings) {
+    const box = el("div");
+    box.style.color = "var(--text)";
+    box.append(
+      line("Guest", bk.name || "—"),
+      line("Stay", `${bk.arrival} → ${bk.departure}`),
+      line("Spa access until", new Date(bk.checkout).toLocaleString()),
+      line("Door code", bk.door_code.join(", ") || "none set"),
+      line("In stay now", bk.in_stay ? "yes" : "no"),
+      line("Source", bk.source || "—"),
+      line("Booking", "#" + bk.id),
+    );
+    b.append(box);
+  }
+
+  const s = $("status");
+  s.replaceChildren();
+  if (o.status_error) s.append(el("div", o.status_error, "msg error"));
+  if (o.status) {
+    const st = o.status;
+    s.style.color = "var(--text)";
+    s.append(
+      line("Spa pump", onOff(st.spa_pump)),
+      line("Spa heater", onOff(st.spa_heater)),
+      line("Blower", onOff(st.blower)),
+      line("Pool pump", onOff(st.pool_pump)),
+      line("Pool heater", onOff(st.pool_heater)),
+      line("Temps", `spa ${deg(st.temps.spa)} · pool ${deg(st.temps.pool)} · air ${deg(st.temps.air)}`),
+      line("Set points", `spa ${deg(st.set_points.spa)} · pool ${deg(st.set_points.pool)}`),
+      line("Guest limits", `spa ${st.limits.spa.min}–${st.limits.spa.max} · pool ${st.limits.pool.min}–${st.limits.pool.max}`),
+    );
+    if (st.cooldown_remaining) s.append(line("Valve cooldown", st.cooldown_remaining + "s"));
+  }
+
+  const l = $("lockouts");
+  l.replaceChildren();
+  const guestLocks = o.lockouts.guest, adminLocks = o.lockouts.admin;
+  if (!guestLocks.length && !adminLocks.length) l.append(el("div", "None."));
+  for (const lk of guestLocks) {
+    const row = el("div", null, "toggle");
+    row.append(el("span", `Guest login · ${lk.ip} · ${Math.ceil(lk.seconds / 60)} min left`));
+    const btn = el("button", "Clear", "small");
+    btn.addEventListener("click", async () => { await api("lockouts/clear", { ip: lk.ip }); refresh(); });
+    row.append(btn);
+    l.append(row);
+  }
+  for (const lk of adminLocks) l.append(el("div", `Admin login · ${lk.ip} · ${Math.ceil(lk.seconds / 60)} min left`));
+}
+
+async function loadEvents() {
+  const type = $("type-filter").value;
+  const data = await api("events?limit=300" + (type ? "&type=" + encodeURIComponent(type) : ""));
+  const sel = $("type-filter");
+  const current = sel.value;
+  sel.replaceChildren(el("option", "All events"));
+  sel.firstChild.value = "";
+  for (const t of data.types) { const opt = el("option", t); opt.value = t; sel.append(opt); }
+  sel.value = current;
+
+  const tbody = $("events");
+  tbody.replaceChildren();
+  if (!data.events.length) {
+    const tr = el("tr"); const td = el("td", "No events yet.", "muted"); td.colSpan = 5; tr.append(td); tbody.append(tr);
+  }
+  for (const ev of data.events) {
+    const tr = el("tr");
+    const typeCls = /fail|lockout|error|overheat|underheat/.test(ev.type) ? "type-fail" : "";
+    tr.append(el("td", fmtTs(ev.ts)), el("td", ev.type, typeCls), el("td", ev.actor || ""), el("td", ev.ip || ""), el("td", ev.detail || "", "detail"));
+    tbody.append(tr);
+  }
+}
+
+async function refresh() {
+  try {
+    await Promise.all([loadOverview(), loadEvents()]);
+    show("dash");
+  } catch (e) {
+    if (e.message !== "unauthorized") alertBox(e.message);
+  }
+}
+
+function alertBox(text) { $("login-msg").textContent = text; $("login-msg").classList.remove("hidden"); show("login"); }
+
+$("login-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("login-msg").classList.add("hidden");
+  try {
+    await api("login", { password: $("password").value });
+    $("password").value = "";
+    await refresh();
+  } catch (err) {
+    alertBox(err.message);
+  }
+});
+$("refresh").addEventListener("click", refresh);
+$("type-filter").addEventListener("change", () => loadEvents().catch(() => {}));
+$("logout").addEventListener("click", async () => { try { await api("logout", {}); } catch (_) {} show("login"); });
+
+refresh();
+setInterval(() => { if (!$("dash").classList.contains("hidden")) refresh(); }, 60000);
+</script>
+</body>
+</html>

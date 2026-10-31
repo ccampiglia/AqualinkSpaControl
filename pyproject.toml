@@ -8,5 +8,6 @@ dependencies = [
     "fastapi>=0.136.0",
     "iaqualink>=0.6.0",
     "python-dotenv>=1.2.2",
+    "tzdata>=2026.6",
     "uvicorn>=0.44.0",
 ]
