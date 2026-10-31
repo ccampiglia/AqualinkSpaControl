@@ -9,6 +9,7 @@ from fastapi.security.api_key import APIKeyHeader
 from starlette.status import HTTP_401_UNAUTHORIZED
 from iaqualink.client import AqualinkClient
 from dotenv import load_dotenv
+from lodgify import LodgifyClient, LodgifyError
 
 load_dotenv()
 
@@ -27,6 +28,7 @@ VALVE_COOLDOWN = int(os.getenv("VALVE_COOLDOWN", "60"))  # Protects mechanical r
 PUSHOVER_USER = os.getenv("PUSHOVER_USER")
 PUSHOVER_TOKEN = os.getenv("PUSHOVER_TOKEN")
 AQUALINK_SPACONTROL_API_KEY = os.getenv("AQUALINK_SPACONTROL_API_KEY")
+LODGIFY_API_KEY = os.getenv("LODGIFY_API_KEY")
 last_run = 0
 
 # Dependency function to validate API key for protected endpoints
@@ -45,6 +47,8 @@ def _validate_env() -> None:
     }.items() if not v]
     if missing:
         raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
+    if not LODGIFY_API_KEY:
+        print("LODGIFY_API_KEY not set — /lodgify endpoints disabled.")
 
 # Helper function to retrieve the Aqualink system, either by specified serial or defaulting to the first available
 async def get_system(client):
@@ -255,3 +259,18 @@ async def spa_mode():
         system = await get_system(client)
         r = await system._send_session_request("set_onetouch_2")
         return {"status": "success", "action": "spa_mode", "response": r.json()}
+
+# Endpoint to list Lodgify bookings (GET /v2/reservations/bookings)
+@app.get("/lodgify/bookings", dependencies=[Depends(get_api_key)])
+async def lodgify_bookings(page: int = 1, size: int = 50, stay_filter: str = "Current"):
+    if not LODGIFY_API_KEY:
+        raise HTTPException(status_code=503, detail="Lodgify not configured")
+    try:
+        async with LodgifyClient(LODGIFY_API_KEY) as lg:
+            return await lg.get_bookings(page=page, size=size, stay_filter=stay_filter)
+    except LodgifyError as e:
+        print(f"Lodgify error: {e}")
+        raise HTTPException(status_code=502, detail=f"Lodgify returned HTTP {e.status_code}")
+    except httpx.HTTPError as e:
+        print(f"Lodgify request failed: {type(e).__name__}")
+        raise HTTPException(status_code=502, detail="Lodgify request failed")

@@ -104,6 +104,14 @@ All control endpoints accept both `GET` and `POST` for compatibility with browse
 | `GET` | `/devices` | Returns all devices with key, type, state, is_on, and label |
 | `GET` | `/onetouch` | Returns raw one-touch scene list from the controller |
 
+### Lodgify
+
+Requires `LODGIFY_API_KEY`; returns `503` if not set, `502` if Lodgify returns an error. The client lives in `lodgify.py` — add new Lodgify endpoints as methods on `LodgifyClient`.
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/lodgify/bookings?page=1&size=50&stay_filter=Current` | Lists Lodgify bookings (`GET /v2/reservations/bookings`) |
+
 ### Response examples
 
 **Spa on/off — success**
@@ -225,6 +233,7 @@ In the Railway dashboard, go to your service → **Variables** and add:
 | `VALVE_COOLDOWN` | no | Default 60 (seconds) |
 | `PUSHOVER_USER` | no | Pushover user key for alerts |
 | `PUSHOVER_TOKEN` | no | Pushover API token for alerts |
+| `LODGIFY_API_KEY` | no | Lodgify public API key (enables `/lodgify/*`) |
 
 Do **not** commit a `.env` file to the repo.
 
@@ -252,6 +261,7 @@ Railway triggers a deploy on every push to the selected branch. Once deployed, y
 | `VALVE_COOLDOWN` | no | 60 | Lockout between valve commands (seconds) |
 | `PUSHOVER_USER` | no | — | Pushover user key |
 | `PUSHOVER_TOKEN` | no | — | Pushover API token |
+| `LODGIFY_API_KEY` | no | — | Lodgify public API key (`X-ApiKey`); enables `/lodgify/*` endpoints |
 | `BASE_URL` | no | http://127.0.0.1:8000 | Target URL for test_tool.py |
 
 ---
