@@ -12,11 +12,12 @@ from iaqualink.client import AqualinkClient
 from iaqualink.exception import AqualinkSystemOfflineException
 from lodgify import LodgifyClient, LodgifyError
 from config import (
-    EMAIL, PASSWORD, TEMP_OVERHEAT_THRESHOLD, TEMP_UNDERHEAT_THRESHOLD, TEMP_MONITOR_INTERVAL,
-    AQUALINK_SPACONTROL_API_KEY, LODGIFY_API_KEY, validate_env, send_pushover_alert,
+    EMAIL, PASSWORD, AQUALINK_SPACONTROL_API_KEY, LODGIFY_API_KEY, validate_env, send_pushover_alert,
 )
 import admin
 import events
+import guard
+import settings
 import guest
 import spa
 from spa import get_system
@@ -94,13 +95,14 @@ def _log_changes(snap: dict) -> None:
 # Uses the pool_heater switch with a state check — never the "Pool Heat" OneTouch, which toggles on each press.
 async def _handle_underheat(system, snap: dict) -> None:
     global _underheat_alerted
+    threshold = settings.get("threshold")
     pool_temp = snap["temps"]["pool"]
     # Pool temp is only meaningful while the pool pump circulates water in pool mode
     if not snap["equipment"]["pool pump"] or snap["equipment"]["spa pump"] or pool_temp is None:
         return
-    if pool_temp > TEMP_UNDERHEAT_THRESHOLD:
+    if pool_temp > threshold:
         if _underheat_alerted:
-            print(f"Pool back above {TEMP_UNDERHEAT_THRESHOLD}F ({pool_temp}F) — low-temp alert cleared.")
+            print(f"Pool back above {threshold}F ({pool_temp}F) — low-temp alert cleared.")
         _underheat_alerted = False
         return
 
@@ -111,38 +113,38 @@ async def _handle_underheat(system, snap: dict) -> None:
             await heater.turn_on()
         spa._invalidate_status()
         action = "pool_heater_on"
-        print(f"Watchdog: pool {pool_temp}F <= {TEMP_UNDERHEAT_THRESHOLD}F and pool heater was off — turned pool heater on.")
+        print(f"Watchdog: pool {pool_temp}F <= {threshold}F and pool heater was off — turned pool heater on.")
         events.log_event("watchdog_pool_heater_on", "watchdog", detail={"pool_temp": pool_temp})
 
     if not _underheat_alerted:
         _underheat_alerted = True
         events.log_event("watchdog_underheat", "watchdog",
-                         detail={"threshold": TEMP_UNDERHEAT_THRESHOLD, "pool_temp": pool_temp, "action": action})
+                         detail={"threshold": threshold, "pool_temp": pool_temp, "action": action})
         heater_note = "Pool heater was off — turned it on." if action == "pool_heater_on" else \
             f"Pool heater is {snap['heater_state']['pool'] or 'unknown'}."
         await send_pushover_alert(
-            f"ALERT: Pool is {pool_temp}°F (at or below {TEMP_UNDERHEAT_THRESHOLD}°F). {heater_note} Check heating system."
+            f"ALERT: Pool is {pool_temp}°F (at or below {threshold}°F). {heater_note} Check heating system."
         )
 
 
-# Spa or pool at/above the overheat threshold: emergency all-off
+# Spa or pool at/above the overheat threshold: emergency all-off.
+# Turns each device off directly — never the "All OFF" OneTouch, which toggles and could turn things back on.
 async def _handle_overheat(system, snap: dict) -> None:
+    threshold = settings.get("TEMP_OVERHEAT_THRESHOLD")
     temps = {k: v for k, v in snap["temps"].items() if k in ("pool", "spa") and v is not None}
-    events.log_event("watchdog_overheat", "watchdog", detail={"threshold": TEMP_OVERHEAT_THRESHOLD, **temps})
-    await send_pushover_alert(f"ALARM: Pool/spa temp exceeded {TEMP_OVERHEAT_THRESHOLD}°F ({temps}) — emergency all-off triggered.")
-    r = await system._send_session_request("set_onetouch_1")
-    if r.status_code == 200:
-        print({"status": "success", "action": "all_off", "response": r.json()})
-        print("ALARM: Emergency shutdown — ALL-OFF (temp threshold exceeded).")
-    else:
-        print(f"ALARM: Failed to trigger all-off (temp threshold exceeded). Response: {r.text}")
-        print("Attempting manual pump shutdown...")
-        for pump_key in ("spa_pump", "pool_pump"):
-            pump = system.devices.get(pump_key)
-            if pump and pump.is_on:
-                await pump.turn_off()
-                print(f"ALARM: Emergency shutdown — {pump_key} off (temp threshold exceeded).")
-    spa._invalidate_status()
+    guard.set_overheat_lockout({"threshold": threshold, **temps})
+    try:
+        turned_off = await spa.all_off(system)
+        result = f"turned off: {', '.join(turned_off) or 'nothing was on'}"
+        events.log_event("watchdog_overheat", "watchdog", detail={"threshold": threshold, **temps, "turned_off": turned_off})
+    except Exception as e:
+        result = f"FAILED — {e}"
+        events.log_event("watchdog_overheat", "watchdog", detail={"threshold": threshold, **temps, "error": str(e)})
+    print(f"ALARM: temp {temps} at/above {threshold}F — emergency all-off, {result}")
+    await send_pushover_alert(
+        f"ALARM: Pool/spa temp {temps} reached {threshold}°F — emergency all-off, {result}. "
+        "Pump guard is locked out until cleared on the admin page."
+    )
 
 
 # Background task: logs status every cycle, records equipment changes, and handles temperature alarms
@@ -168,21 +170,25 @@ async def temp_monitor():
                 print(_status_line(snap))
                 _log_changes(snap)
 
-                if any(v is not None and v >= TEMP_OVERHEAT_THRESHOLD
-                       for k, v in snap["temps"].items() if k in ("pool", "spa")):
+                over = settings.get("TEMP_OVERHEAT_THRESHOLD")
+                if any(v is not None and v >= over for k, v in snap["temps"].items() if k in ("pool", "spa")):
                     await _handle_overheat(system, snap)
                 else:
                     await _handle_underheat(system, snap)
+                    result = await guard.run(system, snap)
+                    if result not in ("disabled", "outside window", "ok"):
+                        print(f"Pump guard: {result}")
         except Exception as e:
             print(f"Watchdog Error: {type(e).__name__}: {e}")
         finally:
-            await asyncio.sleep(TEMP_MONITOR_INTERVAL)
+            await asyncio.sleep(settings.get("TEMP_MONITOR_INTERVAL"))
 
 # FastAPI lifespan context to manage startup/shutdown tasks, including environment validation and starting the temperature monitor
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     validate_env()
     events.init_db()
+    settings.init()
     task = asyncio.create_task(temp_monitor())
     yield
     task.cancel()
@@ -244,14 +250,13 @@ async def get_onetouch():
         r = await system._send_session_request("get_onetouch")
         return r.json()
 
-# Endpoint to trigger the "all off" one-touch command, which turns off all pumps and heaters immediately
+# Endpoint to turn off all heaters, the blower and both pumps (each device directly, not the toggling OneTouch)
 @app.api_route("/all-off", methods=["GET", "POST"], dependencies=[Depends(get_api_key)])
 async def all_off(request: Request):
-    async with AqualinkClient(EMAIL, PASSWORD) as client:
-        system = await get_system(client)
-        r = await system._send_session_request("set_onetouch_1")
-        events.log_event("api_all_off", "api", _ip(request))
-        return {"status": "success", "action": "all_off", "response": r.json()}
+    turned_off = await spa.all_off()
+    guard.pause_until_window_end()  # don't let the pump guard undo a deliberate all-off
+    events.log_event("api_all_off", "api", _ip(request), {"turned_off": turned_off})
+    return {"status": "success", "action": "all_off", "turned_off": turned_off}
 
 # Endpoint to trigger the "spa mode" one-touch command, which typically turns on the spa pump and heater and turns off the pool heater
 @app.api_route("/spa-mode", methods=["GET", "POST"], dependencies=[Depends(get_api_key)])

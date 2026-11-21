@@ -1,7 +1,8 @@
 import time
 import asyncio
 from iaqualink.client import AqualinkClient
-from config import EMAIL, PASSWORD, SERIAL, VALVE_COOLDOWN, TEMP_LIMITS
+from config import EMAIL, PASSWORD, SERIAL, IAQUALINK_MAX_SET_POINT
+import settings
 
 STATUS_CACHE_SECONDS = 15
 
@@ -25,7 +26,7 @@ async def get_system(client):
 
 # Seconds left in the mechanical cooldown after a spa on/off command (0 if not locked)
 def cooldown_remaining() -> int:
-    return max(0, int(VALVE_COOLDOWN - (time.time() - last_run)))
+    return max(0, int(settings.get("VALVE_COOLDOWN") - (time.time() - last_run)))
 
 
 def is_locked() -> bool:
@@ -148,7 +149,7 @@ async def set_aux1(on: bool) -> None:
 
 # Turns the spa or pool heater on or off
 async def set_heater(kind: str, on: bool) -> None:
-    if kind not in TEMP_LIMITS:
+    if kind not in ("spa", "pool"):
         raise ValueError(f"Unknown heater: {kind}")
     async with _command_lock:
         async with AqualinkClient(EMAIL, PASSWORD) as client:
@@ -164,11 +165,18 @@ async def set_heater(kind: str, on: bool) -> None:
         _invalidate_status()
 
 
-# Sets the spa or pool set point, enforcing the configured min/max range
-async def set_temp(kind: str, value: int) -> None:
-    if kind not in TEMP_LIMITS:
+# Set point range for the admin page: anything the controller accepts, kept below the overheat shutoff
+def admin_temp_limits() -> dict[str, tuple[int, int]]:
+    high = min(IAQUALINK_MAX_SET_POINT, settings.get("TEMP_OVERHEAT_THRESHOLD") - 1)
+    return {"spa": (40, high), "pool": (40, high)}
+
+
+# Sets the spa or pool set point, enforcing the guest min/max range (or the admin range when admin=True)
+async def set_temp(kind: str, value: int, admin: bool = False) -> None:
+    limits = admin_temp_limits() if admin else settings.temp_limits()
+    if kind not in limits:
         raise ValueError(f"Unknown set point: {kind}")
-    low, high = TEMP_LIMITS[kind]
+    low, high = limits[kind]
     if not low <= value <= high:
         raise ValueError(f"{kind.capitalize()} temperature must be between {low} and {high}°F")
     async with _command_lock:
@@ -198,6 +206,7 @@ async def get_status(force: bool = False) -> dict:
                 "blower": _on(d.get("aux_1")),
                 "pool_pump": _on(d.get("pool_pump")),
                 "pool_heater": _on(d.get("pool_heater")),
+                "freeze_protection": _on(d.get("freeze_protection")),
                 "heater_state": {
                     "spa": _heater_state(d.get("spa_heater")),
                     "pool": _heater_state(d.get("pool_heater")),
@@ -214,6 +223,57 @@ async def get_status(force: bool = False) -> dict:
             }
         _status_cache = (time.time(), status)
         status = dict(status)
-    status["limits"] = {k: {"min": lo, "max": hi} for k, (lo, hi) in TEMP_LIMITS.items()}
+    status["limits"] = {k: {"min": lo, "max": hi} for k, (lo, hi) in settings.temp_limits().items()}
     status["cooldown_remaining"] = cooldown_remaining()
     return status
+
+
+# Turns the pool pump on or off (admin only)
+async def set_pool_pump(on: bool) -> None:
+    async with _command_lock:
+        async with AqualinkClient(EMAIL, PASSWORD) as client:
+            system = await get_system(client)
+            await system.update()
+            pump = system.devices.get("pool_pump")
+            if pump is None:
+                raise RuntimeError("pool_pump not found")
+            if on and not pump.is_on:
+                await pump.turn_on()
+            elif not on and pump.is_on:
+                await pump.turn_off()
+        _invalidate_status()
+
+
+# Order matters: heaters off before the pumps that feed them, blower before the spa pump
+ALL_OFF_ORDER = ("spa_heater", "pool_heater", "aux_1", "spa_pump", "pool_pump")
+
+
+# Turns off heaters, blower and pumps one by one, only touching what is on (never a toggle that could turn
+# something back on). Uses an already-updated system when given (watchdog), otherwise opens its own session.
+# Returns the devices that were turned off; raises if any of them failed.
+async def all_off(system=None) -> list[str]:
+    async def run(sys_) -> list[str]:
+        turned_off, failed = [], []
+        for key in ALL_OFF_ORDER:
+            device = sys_.devices.get(key)
+            if device is None or not device.is_on:
+                continue
+            try:
+                await device.turn_off()
+                turned_off.append(key)
+            except Exception as e:
+                failed.append(f"{key} ({type(e).__name__})")
+        if failed:
+            raise RuntimeError(f"Could not turn off: {', '.join(failed)}; turned off: {', '.join(turned_off) or 'nothing'}")
+        return turned_off
+
+    async with _command_lock:
+        if system is not None:
+            result = await run(system)
+        else:
+            async with AqualinkClient(EMAIL, PASSWORD) as client:
+                sys_ = await get_system(client)
+                await sys_.update()
+                result = await run(sys_)
+    _invalidate_status()
+    return result

@@ -7,9 +7,13 @@ A FastAPI microservice that controls a Jandy iAquaLink pool/spa system via the i
 ## Features
 
 - Spa on/off — toggles spa pump, spa heater, air blower (aux_1), and pool heater in the correct sequence
-- One-touch scene execution — All OFF and Spa Mode via the controller's built-in scenes
-- Overheat protection — watchdog shuts everything off and sends a Pushover alert if spa or pool temp exceeds `TEMP_OVERHEAT_THRESHOLD` (default 105°F)
-- Freeze/underheat protection — watchdog turns on pool heater and sends a Pushover alert if spa or pool temp drops below `TEMP_UNDERHEAT_THRESHOLD` (default 80°F)
+- All off — turns off heaters, blower and both pumps one device at a time (not the OneTouch scene, which toggles)
+- Spa Mode via the controller's built-in OneTouch scene
+- Overheat protection — watchdog turns everything off, sends a Pushover alert, and locks out the pump guard if spa or pool temp reaches `TEMP_OVERHEAT_THRESHOLD` (default 105°F)
+- Low pool temp — while the pool pump runs in pool mode, if the pool is at or below `TEMP_UNDERHEAT_THRESHOLD` (default 80°F) the watchdog turns the pool heater on if it's off and alerts once per cold spell
+- Pump guard — optional run windows (set on the admin page) during which the watchdog turns the pool pump back on if it's off; skips spa mode, can be paused, gives up after 3 restarts per window
+- Status logging — one status line per watchdog cycle, plus `equipment_change` and controller offline/online events
+- Admin page (`/admin`) — equipment controls (spa, heaters, blower, pool pump, set points, all off), pump guard schedule, and settings that override the environment defaults (stored in the event database)
 - Configurable watchdog interval — poll frequency controlled by `TEMP_MONITOR_INTERVAL` (default 600s)
 - Mechanical cooldown lock — configurable lockout between valve-switching commands to protect the diverter (default 60s)
 - API key authentication — all endpoints require an `X-API-Key` header

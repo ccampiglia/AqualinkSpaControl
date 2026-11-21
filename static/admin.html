@@ -10,6 +10,31 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Raleway:wght@400;700&family=Rosario:wght@400;700&family=Rouge+Script&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/theme.css">
+  <style>
+    .ctl { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; border-top: 1px solid var(--gold-light); }
+    .ctl:first-of-type { border-top: none; }
+    .btns { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+    .group-title { font-family: "Raleway", sans-serif; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.8rem; color: var(--muted); margin: 14px 0 2px; }
+    .stepper button { width: 36px; height: 36px; font-size: 1.1rem; }
+    .stepper .val { min-width: 48px; font-size: 1.1rem; }
+    button.danger { background: var(--danger); color: #fff; }
+    button.danger:hover { background: #8f3324; }
+    label.check { display: flex; align-items: center; gap: 8px; padding: 6px 0; cursor: pointer; }
+    label.check input { width: 20px; height: 20px; padding: 0; margin: 0; accent-color: var(--teal); }
+    .window { border: 2px solid var(--gold-light); border-radius: 12px; padding: 10px; margin: 8px 0; }
+    .days { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-bottom: 8px; }
+    .days label { display: flex; align-items: center; gap: 4px; font-size: 0.9rem; cursor: pointer; }
+    .days input { width: 18px; height: 18px; padding: 0; accent-color: var(--teal); }
+    .times { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .times input { width: auto; padding: 8px; }
+    .setting { display: grid; grid-template-columns: 1fr 110px auto; gap: 8px; align-items: center; padding: 8px 0; border-top: 1px solid var(--gold-light); }
+    .setting:first-of-type { border-top: none; }
+    .setting input { padding: 8px; }
+    .setting .muted { font-size: 0.8rem; }
+    .setting.changed input { border-color: var(--gold); }
+    .banner { background: #fbe4df; color: var(--danger); border-radius: 12px; padding: 10px 14px; margin: 8px 0; }
+    @media (max-width: 560px) { .setting { grid-template-columns: 1fr 90px; } .setting .reset { grid-column: 1 / -1; justify-self: end; } }
+  </style>
 </head>
 <body>
 <div class="wrap wide">
@@ -40,13 +65,62 @@
         <div id="bookings" class="muted">Loading…</div>
       </div>
       <div class="card" style="min-width:280px">
-        <h2>Spa status</h2>
-        <div id="status" class="muted">Loading…</div>
-      </div>
-      <div class="card" style="min-width:280px">
         <h2>Active lockouts</h2>
         <div id="lockouts" class="muted">Loading…</div>
       </div>
+    </div>
+
+    <div class="row" style="flex-wrap:wrap;align-items:stretch">
+      <div class="card" style="min-width:300px">
+        <h2>Equipment</h2>
+        <div id="status" class="muted">Loading…</div>
+        <div id="controls" class="hidden">
+          <div class="group-title">Spa</div>
+          <div class="ctl"><div><strong>Spa</strong> <span id="c-spa-pill" class="pill">—</span></div>
+            <div class="btns"><button class="small" id="c-spa-on">Spa on</button><button class="small secondary" id="c-spa-off">Spa off</button></div></div>
+          <div class="ctl"><div><strong>Spa heater</strong> <span id="c-spa_heater-pill" class="pill">—</span></div>
+            <div class="btns"><button class="small" id="c-spa_heater">—</button></div></div>
+          <div class="ctl"><div><strong>Blower</strong> <span id="c-blower-pill" class="pill">—</span></div>
+            <div class="btns"><button class="small" id="c-blower">—</button></div></div>
+          <div class="ctl setpoint" data-kind="spa"><div><strong>Spa set point</strong><br><span class="muted range"></span></div>
+            <div class="stepper"><button class="minus" aria-label="Lower spa set point">−</button><span class="val">—</span><button class="plus" aria-label="Raise spa set point">+</button></div></div>
+
+          <div class="group-title">Pool</div>
+          <div class="ctl"><div><strong>Pool pump</strong> <span id="c-pool_pump-pill" class="pill">—</span></div>
+            <div class="btns"><button class="small" id="c-pool_pump">—</button></div></div>
+          <div class="ctl"><div><strong>Pool heater</strong> <span id="c-pool_heater-pill" class="pill">—</span></div>
+            <div class="btns"><button class="small" id="c-pool_heater">—</button></div></div>
+          <div class="ctl setpoint" data-kind="pool"><div><strong>Pool set point</strong><br><span class="muted range"></span></div>
+            <div class="stepper"><button class="minus" aria-label="Lower pool set point">−</button><span class="val">—</span><button class="plus" aria-label="Raise pool set point">+</button></div></div>
+
+          <button id="c-apply-temp" class="full hidden" style="margin-top:10px">Save set points</button>
+          <p id="c-cooldown" class="msg ok hidden"></p>
+          <div style="margin-top:14px;text-align:right"><button class="small danger" id="c-all-off">All off</button></div>
+          <div id="c-msg" class="msg hidden"></div>
+        </div>
+      </div>
+
+      <div class="card" style="min-width:300px">
+        <h2>Pump guard</h2>
+        <p class="muted" style="margin-top:0">Turns the pool pump back on if it's off during a run window (pool mode only — never while the spa is on). Times are in <span id="g-tz">property time</span>.</p>
+        <div id="g-status"></div>
+        <label class="check"><input type="checkbox" id="g-enabled"> <strong>Guard on</strong></label>
+        <label class="check"><input type="checkbox" id="g-heater"> Also keep the pool heater on during run windows</label>
+        <div id="g-windows"></div>
+        <div class="row" style="margin-top:8px">
+          <button class="small ghost" id="g-add" style="flex:0;white-space:nowrap">+ Add run window</button>
+          <div style="text-align:right"><button class="small" id="g-save">Save schedule</button></div>
+        </div>
+        <div id="g-msg" class="msg hidden"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Settings</h2>
+      <p class="muted" style="margin-top:0">Saved here, these override the server's environment defaults. Passwords and API keys stay in the server environment.</p>
+      <div id="s-list"></div>
+      <div style="text-align:right;margin-top:10px"><button class="small" id="s-save" disabled>Save settings</button></div>
+      <div id="s-msg" class="msg hidden"></div>
     </div>
 
     <div class="card">
@@ -130,6 +204,8 @@ async function loadOverview() {
     b.append(box);
   }
 
+  status = o.status;
+  adminLimits = o.admin_limits;
   const s = $("status");
   s.replaceChildren();
   if (o.status_error) s.append(el("div", o.status_error, "msg error"));
@@ -137,17 +213,16 @@ async function loadOverview() {
     const st = o.status;
     s.style.color = "var(--text)";
     s.append(
-      line("Spa pump", onOff(st.spa_pump)),
-      line("Spa heater", st.heater_state.spa || "—"),
-      line("Blower", onOff(st.blower)),
-      line("Pool pump", onOff(st.pool_pump)),
-      line("Pool heater", st.heater_state.pool || "—"),
       line("Temps", `spa ${deg(st.temps.spa)} · pool ${deg(st.temps.pool)} · air ${deg(st.temps.air)}`),
-      line("Set points", `spa ${deg(st.set_points.spa)} · pool ${deg(st.set_points.pool)}`),
+      line("Freeze protection", onOff(st.freeze_protection)),
       line("Guest limits", `spa ${st.limits.spa.min}–${st.limits.spa.max} · pool ${st.limits.pool.min}–${st.limits.pool.max}`),
     );
-    if (st.cooldown_remaining) s.append(line("Valve cooldown", st.cooldown_remaining + "s"));
+    cooldownEnd = Date.now() + (st.cooldown_remaining || 0) * 1000;
+    if (st.cooldown_remaining) tickCooldown();
   }
+  $("controls").classList.toggle("hidden", !o.status);
+  renderControls();
+  renderGuardStatus(o.guard);
 
   const l = $("lockouts");
   l.replaceChildren();
@@ -181,14 +256,271 @@ async function loadEvents() {
   }
   for (const ev of data.events) {
     const tr = el("tr");
-    const typeCls = /fail|lockout|error|overheat|underheat/.test(ev.type) ? "type-fail" : "";
+    const typeCls = /fail|lockout|error|overheat|underheat|offline|gave_up/.test(ev.type) ? "type-fail" : "";
     tr.append(el("td", fmtTs(ev.ts)), el("td", ev.type, typeCls), el("td", ev.actor || ""), el("td", ev.ip || ""), el("td", ev.detail || "", "detail"));
     tbody.append(tr);
   }
 }
 
+// ---------- Equipment controls ----------
+let status = null, adminLimits = null, busy = false, pending = {};
+let cooldownEnd = 0, cooldownTimer = null;
+function cooldownLeft() { return Math.max(0, Math.ceil((cooldownEnd - Date.now()) / 1000)); }
+function tickCooldown() {
+  if (cooldownTimer) return;
+  cooldownTimer = setInterval(() => {
+    renderControls();
+    if (cooldownLeft() === 0) { clearInterval(cooldownTimer); cooldownTimer = null; loadOverview().catch(() => {}); }
+  }, 1000);
+}
+
+function message(box, text, kind) {
+  box.textContent = text;
+  box.className = "msg " + kind;
+  if (kind === "ok") setTimeout(() => box.classList.add("hidden"), 5000);
+}
+
+function pill(id, text, on) { $(id).textContent = text; $(id).classList.toggle("on", !!on); }
+function heaterText(hs) { return hs === null || hs === undefined ? "—" : hs === "heating" ? "Heating" : hs === "on" ? "On (idle)" : "Off"; }
+function toggleBtn(id, isOn, disabled) {
+  $(id).textContent = isOn ? "Turn off" : "Turn on";
+  $(id).classList.toggle("secondary", !!isOn);
+  $(id).disabled = disabled;
+}
+
+function renderControls() {
+  if (!status) return;
+  const st = status, cd = cooldownLeft(), spaOn = !!st.spa_pump;
+  pill("c-spa-pill", spaOn ? (st.heater_state.spa === "heating" ? "On · Heating" : "On") : "Off", spaOn);
+  $("c-spa-on").disabled = busy || cd > 0 || spaOn;
+  $("c-spa-off").disabled = busy || cd > 0 || !spaOn;
+  for (const kind of ["spa", "pool"]) {
+    const hs = st.heater_state[kind];
+    pill(`c-${kind}_heater-pill`, heaterText(hs), hs === "on" || hs === "heating");
+    toggleBtn(`c-${kind}_heater`, hs && hs !== "off", busy || hs === null || hs === undefined);
+  }
+  pill("c-blower-pill", st.blower === null ? "—" : st.blower ? "On" : "Off", st.blower);
+  toggleBtn("c-blower", st.blower, busy || (!spaOn && !st.blower));
+  pill("c-pool_pump-pill", st.pool_pump === null ? "—" : st.pool_pump ? "On" : "Off", st.pool_pump);
+  toggleBtn("c-pool_pump", st.pool_pump, busy || st.pool_pump === null);
+  $("c-cooldown").classList.toggle("hidden", cd === 0);
+  $("c-cooldown").textContent = `Valves moving — spa buttons available again in ${cd}s.`;
+  $("c-all-off").disabled = busy;
+
+  for (const row of document.querySelectorAll("#controls .setpoint")) {
+    const kind = row.dataset.kind, lim = adminLimits[kind];
+    const val = pending[kind] ?? st.set_points[kind];
+    row.querySelector(".range").textContent = `${lim.min}–${lim.max}°F (admin range)`;
+    row.querySelector(".val").textContent = deg(val);
+    row.querySelector(".minus").disabled = busy || val === null || val <= lim.min;
+    row.querySelector(".plus").disabled = busy || val === null || val >= lim.max;
+  }
+  $("c-apply-temp").classList.toggle("hidden", Object.keys(pending).length === 0);
+  $("c-apply-temp").disabled = busy;
+}
+
+async function control(path, body, okText) {
+  busy = true; renderControls();
+  try {
+    await api(path, body);
+    message($("c-msg"), okText, "ok");
+  } catch (e) {
+    if (e.message !== "unauthorized") message($("c-msg"), e.message, "error");
+  } finally {
+    busy = false;
+    await refresh();
+  }
+}
+
+$("c-spa-on").addEventListener("click", () => control("spa", { on: true }, "Spa turning on — valves switch first, blower follows in about 30s."));
+$("c-spa-off").addEventListener("click", () => control("spa", { on: false }, "Spa turning off; pool heater back on."));
+for (const kind of ["spa", "pool"]) {
+  $(`c-${kind}_heater`).addEventListener("click", () => {
+    const on = status.heater_state[kind] === "off";
+    control("heater", { kind, on }, `${kind === "spa" ? "Spa" : "Pool"} heater turning ${on ? "on" : "off"}.`);
+  });
+}
+$("c-blower").addEventListener("click", () => control("blower", { on: !status.blower }, `Blower turning ${status.blower ? "off" : "on"}.`));
+$("c-pool_pump").addEventListener("click", () => {
+  const on = !status.pool_pump;
+  if (!on && !confirm("Turn the pool pump off? If the pump guard is on, it will be paused until the end of the current run window.")) return;
+  control("pool-pump", { on }, `Pool pump turning ${on ? "on" : "off"}.`);
+});
+$("c-all-off").addEventListener("click", () => {
+  if (!confirm("Turn off all heaters, the blower and both pumps? If the pump guard is on, it will be paused until the end of the current run window.")) return;
+  control("all-off", {}, "All equipment turning off.");
+});
+for (const row of document.querySelectorAll("#controls .setpoint")) {
+  const kind = row.dataset.kind;
+  const step = (d) => {
+    const lim = adminLimits[kind];
+    const cur = pending[kind] ?? status.set_points[kind] ?? lim.min;
+    const next = Math.min(lim.max, Math.max(lim.min, cur + d));
+    if (next === status.set_points[kind]) delete pending[kind]; else pending[kind] = next;
+    renderControls();
+  };
+  row.querySelector(".minus").addEventListener("click", () => step(-1));
+  row.querySelector(".plus").addEventListener("click", () => step(1));
+}
+$("c-apply-temp").addEventListener("click", async () => {
+  const changes = Object.entries(pending);
+  pending = {};
+  for (const [kind, value] of changes) await control("temp", { kind, value }, "Set point saved.");
+});
+
+// ---------- Pump guard ----------
+let dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+let guardDirty = false;
+
+function fmtClock(ts) { return new Date(ts).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }); }
+
+function renderGuardStatus(g) {
+  const box = $("g-status");
+  box.replaceChildren();
+  $("g-tz").textContent = g.timezone;
+  if (g.overheat_lockout) {
+    const b = el("div", null, "banner");
+    b.append(el("strong", "Overheat lockout. "),
+      document.createTextNode(`The emergency shutoff ran at ${fmtTs(g.overheat_lockout.ts)}; the guard won't restart anything until you clear this. `));
+    const btn = el("button", "Clear lockout", "small");
+    btn.addEventListener("click", () => guardAction("guard/clear-lockout", {}, "Lockout cleared."));
+    b.append(btn);
+    box.append(b);
+  }
+  const parts = [];
+  if (!g.config.enabled) parts.push("Off");
+  else if (g.paused_until) parts.push(`Paused until ${fmtClock(g.paused_until * 1000)}`);
+  else if (g.in_window) parts.push(`In a run window until ${fmtClock(g.window_end)}`);
+  else parts.push("Waiting for the next run window");
+  if (g.config.enabled && g.in_window) parts.push(`restarts this window: ${g.restarts_this_window}/${g.max_restarts}` + (g.gave_up ? " — gave up" : ""));
+  box.append(line("Status", parts.join(" · ")));
+
+  const row = el("div", null, "btns");
+  row.style.margin = "6px 0";
+  if (g.paused_until) {
+    const r = el("button", "Resume now", "small"); r.addEventListener("click", () => guardAction("guard/resume", {}, "Guard resumed.")); row.append(r);
+  } else if (g.config.enabled) {
+    for (const h of [1, 4, 12]) {
+      const p = el("button", `Pause ${h}h`, "small secondary");
+      p.addEventListener("click", () => guardAction("guard/pause", { hours: h }, `Guard paused for ${h} hour${h > 1 ? "s" : ""}.`));
+      row.append(p);
+    }
+  }
+  box.append(row);
+  if (!guardDirty) renderGuardForm(g.config);
+}
+
+function windowRow(w) {
+  const box = el("div", null, "window");
+  const days = el("div", null, "days");
+  dayNames.forEach((name, i) => {
+    const lab = el("label"); const cb = el("input"); cb.type = "checkbox"; cb.value = i; cb.checked = w.days.includes(i);
+    lab.append(cb, document.createTextNode(name)); days.append(lab);
+  });
+  const times = el("div", null, "times");
+  const start = el("input"); start.type = "time"; start.value = w.start; start.className = "start";
+  const end = el("input"); end.type = "time"; end.value = w.end; end.className = "end";
+  const rm = el("button", "Remove", "small ghost");
+  rm.addEventListener("click", () => { box.remove(); guardDirty = true; });
+  times.append(el("span", "From"), start, el("span", "to"), end, rm);
+  box.append(days, times);
+  box.addEventListener("change", () => { guardDirty = true; });
+  return box;
+}
+
+function renderGuardForm(cfg) {
+  $("g-enabled").checked = cfg.enabled;
+  $("g-heater").checked = cfg.keep_heater_on;
+  $("g-windows").replaceChildren(...cfg.windows.map(windowRow));
+  if (!cfg.windows.length) $("g-windows").append(el("p", "No run windows yet.", "muted"));
+}
+
+function readGuardForm() {
+  return {
+    enabled: $("g-enabled").checked,
+    keep_heater_on: $("g-heater").checked,
+    windows: [...document.querySelectorAll("#g-windows .window")].map((w) => ({
+      days: [...w.querySelectorAll(".days input:checked")].map((c) => Number(c.value)),
+      start: w.querySelector(".start").value,
+      end: w.querySelector(".end").value,
+    })),
+  };
+}
+
+async function guardAction(path, body, okText) {
+  try {
+    const r = await api(path, body);
+    if (path === "guard") guardDirty = false;
+    renderGuardStatus(r.guard);
+    message($("g-msg"), okText, "ok");
+    loadEvents().catch(() => {});
+  } catch (e) {
+    if (e.message !== "unauthorized") message($("g-msg"), e.message, "error");
+  }
+}
+
+$("g-add").addEventListener("click", () => {
+  const p = $("g-windows").querySelector("p"); if (p) p.remove();
+  $("g-windows").append(windowRow({ days: [0, 1, 2, 3, 4, 5, 6], start: "08:00", end: "18:00" }));
+  guardDirty = true;
+});
+for (const id of ["g-enabled", "g-heater"]) $(id).addEventListener("change", () => { guardDirty = true; });
+$("g-save").addEventListener("click", () => guardAction("guard", readGuardForm(), "Schedule saved."));
+
+// ---------- Settings ----------
+let settingsList = [];
+function renderSettings() {
+  const list = $("s-list");
+  list.replaceChildren();
+  for (const st of settingsList) {
+    const row = el("div", null, "setting");
+    const info = el("div");
+    info.append(el("strong", st.label), el("br"), el("span", `${st.help} Default ${st.default} ${st.unit}.`, "muted"));
+    const input = el("input"); input.type = "number"; input.min = st.min; input.max = st.max; input.step = 1;
+    input.value = st.value; input.dataset.key = st.key; input.dataset.orig = st.value;
+    input.setAttribute("aria-label", st.label);
+    input.addEventListener("input", () => {
+      row.classList.toggle("changed", input.value !== input.dataset.orig);
+      $("s-save").disabled = !document.querySelector("#s-list .changed");
+    });
+    const reset = el("button", "Reset", "small ghost reset");
+    reset.disabled = !st.overridden;
+    reset.title = `Back to the default (${st.default})`;
+    reset.addEventListener("click", () => saveSettings({ [st.key]: null }));
+    row.append(info, input, reset);
+    list.append(row);
+  }
+  $("s-save").disabled = true;
+}
+
+async function loadSettings() {
+  const r = await api("settings");
+  settingsList = r.settings; dayNames = r.day_names;
+  renderSettings();
+}
+
+async function saveSettings(changes) {
+  try {
+    const r = await api("settings", { changes });
+    settingsList = r.settings;
+    renderSettings();
+    message($("s-msg"), "Settings saved.", "ok");
+    refresh();
+  } catch (e) {
+    if (e.message !== "unauthorized") message($("s-msg"), e.message, "error");
+  }
+}
+
+$("s-save").addEventListener("click", () => {
+  const changes = {};
+  for (const input of document.querySelectorAll("#s-list .changed input")) changes[input.dataset.key] = Number(input.value);
+  saveSettings(changes);
+});
+
+let settingsLoaded = false;
 async function refresh() {
   try {
+    if (!settingsLoaded) { await loadSettings(); settingsLoaded = true; }
     await Promise.all([loadOverview(), loadEvents()]);
     show("dash");
   } catch (e) {
