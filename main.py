@@ -95,7 +95,7 @@ def _log_changes(snap: dict) -> None:
 # Uses the pool_heater switch with a state check — never the "Pool Heat" OneTouch, which toggles on each press.
 async def _handle_underheat(system, snap: dict) -> None:
     global _underheat_alerted
-    threshold = settings.get("threshold")
+    threshold = settings.get("TEMP_UNDERHEAT_THRESHOLD")
     pool_temp = snap["temps"]["pool"]
     # Pool temp is only meaningful while the pool pump circulates water in pool mode
     if not snap["equipment"]["pool pump"] or snap["equipment"]["spa pump"] or pool_temp is None:
