@@ -1,7 +1,8 @@
 import time
 import asyncio
 from iaqualink.client import AqualinkClient
-from config import EMAIL, PASSWORD, SERIAL, IAQUALINK_MAX_SET_POINT
+from config import EMAIL, PASSWORD, SERIAL, IAQUALINK_MAX_SET_POINT, send_pushover_alert
+import events
 import settings
 
 STATUS_CACHE_SECONDS = 15
@@ -10,6 +11,12 @@ last_run = 0.0
 _command_lock = asyncio.Lock()  # Serializes equipment commands (guest page + Leviton/IFTTT + watchdog)
 _status_cache: tuple[float, dict] | None = None
 _background_tasks: set[asyncio.Task] = set()
+_spa_generation = 0  # bumped by every spa on/off and manual blower command; cancels a pending automatic blower start
+
+BLOWER_DELAY = 30           # seconds after spa-on before the blower starts
+BLOWER_RETRY_INTERVAL = 15  # seconds between checks while waiting for the spa pump / confirming the blower
+BLOWER_MAX_WAIT = 120       # give up (and alert) this long after the first attempt
+BLOWER_MAX_SENDS = 3        # turn-on commands to send before giving up on a blower that won't stay on
 
 
 class CooldownError(Exception):
@@ -57,9 +64,9 @@ def _heater_state(device) -> str | None:
     return {"1": "heating", "3": "on"}.get(str(device.state), "off")
 
 
-# Turns on spa pump + spa heater, turns off pool heater, and enables aux_1 (blower) after 30s
+# Turns on spa pump + spa heater, turns off pool heater, and enables aux_1 (blower) once the spa pump is running
 async def spa_on() -> None:
-    global last_run
+    global last_run, _spa_generation
     async with _command_lock:
         if is_locked():
             raise CooldownError()
@@ -81,16 +88,19 @@ async def spa_on() -> None:
                 await pool_heater.turn_off()
 
         last_run = time.time()
+        _spa_generation += 1
+        generation = _spa_generation
         _invalidate_status()
-    task = asyncio.create_task(_enable_aux1_after_delay())
+    task = asyncio.create_task(_enable_aux1_after_delay(generation))
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
 
 
 # Turns off spa pump + spa heater + aux_1 (blower), and turns the pool heater back on
 async def spa_off() -> None:
-    global last_run
+    global last_run, _spa_generation
     async with _command_lock:
+        _spa_generation += 1  # cancel any pending automatic blower start
         if is_locked():
             raise CooldownError()
         async with AqualinkClient(EMAIL, PASSWORD) as client:
@@ -118,19 +128,73 @@ async def spa_off() -> None:
         _invalidate_status()
 
 
-# Background task: turns on aux_1 30 seconds after spa-on
-async def _enable_aux1_after_delay() -> None:
-    await asyncio.sleep(30)
-    try:
-        await set_aux1(True)
-        print("aux_1 enabled (30s post spa-on delay).")
-    except Exception as e:
-        print(f"aux_1 enable error: {e}")
+# One automatic blower attempt with a fresh controller read. Returns:
+#   "confirmed" — spa pump and blower both read as on
+#   "sent"      — spa pump is on and the blower was off, so we sent the turn-on (confirmed on the next attempt)
+#   "waiting"   — spa pump isn't reporting on yet
+#   "off_again" — blower still off after we already sent the turn-on BLOWER_MAX_SENDS times (not resent)
+#   "cancelled" — a spa on/off or manual blower command happened since this spa-on
+async def _blower_attempt(generation: int, may_send: bool = True) -> str:
+    async with _command_lock:
+        if generation != _spa_generation:
+            return "cancelled"
+        async with AqualinkClient(EMAIL, PASSWORD) as client:
+            system = await get_system(client)
+            await system.update()
+            devices = await system.get_devices()
+            aux1 = devices.get("aux_1")
+            if aux1 is None:
+                raise RuntimeError("aux_1 not found")
+            if not _on(devices.get("spa_pump")):
+                return "waiting"
+            if aux1.is_on:
+                return "confirmed"
+            if not may_send:
+                return "off_again"
+            await aux1.turn_on()
+    _invalidate_status()
+    return "sent"
+
+
+# Background task: after spa-on, waits for the spa pump to report running, turns the blower on,
+# then re-reads the controller to confirm it's actually on. Retries until BLOWER_MAX_WAIT, then alerts.
+async def _enable_aux1_after_delay(generation: int) -> None:
+    await asyncio.sleep(BLOWER_DELAY)
+    started = time.time()
+    attempts, sent, last = 0, 0, ""
+    while True:
+        attempts += 1
+        try:
+            last = await _blower_attempt(generation, may_send=sent < BLOWER_MAX_SENDS)
+        except Exception as e:
+            last = f"error: {type(e).__name__}: {e}"
+        waited = int(time.time() - started) + BLOWER_DELAY
+        if last == "cancelled":
+            print("Blower: spa was turned off or the blower was changed manually — automatic blower start cancelled.")
+            return
+        if last == "confirmed":
+            print(f"Blower: confirmed ON with spa pump running ({waited}s after spa-on).")
+            events.log_event("blower_auto_on", "spa", detail={"seconds_after_spa_on": waited, "attempts": attempts})
+            return
+        if last == "sent":
+            sent += 1
+            print(f"Blower: spa pump is running — sent blower ON ({waited}s after spa-on); confirming next check.")
+        else:
+            print(f"Blower: not started yet — { {'waiting': 'spa pump not reporting on', 'off_again': 'blower still off after 3 tries'}.get(last, last) } ({waited}s after spa-on).")
+        if last == "off_again" or time.time() - started >= BLOWER_MAX_WAIT:
+            reason = {"waiting": "the spa pump never reported running"}.get(
+                last, "the blower didn't stay on after being turned on" if last in ("sent", "off_again") else last)
+            events.log_event("blower_auto_failed", "spa", detail={"reason": reason, "attempts": attempts, "commands_sent": sent})
+            await send_pushover_alert(f"Spa blower didn't start after spa-on: {reason}.")
+            return
+        await asyncio.sleep(BLOWER_RETRY_INTERVAL)
 
 
 # Turns aux_1 (air blower) on or off; turning it on requires the spa pump to be running
 async def set_aux1(on: bool) -> None:
+    global _spa_generation
     async with _command_lock:
+        _spa_generation += 1  # a manual blower command overrides any pending automatic start
         async with AqualinkClient(EMAIL, PASSWORD) as client:
             system = await get_system(client)
             await system.update()

@@ -212,7 +212,7 @@ async def spa_on(request: Request):
     except spa.CooldownError:
         return {"status": "ignored", "reason": "Mechanical cooldown in progress"}
     events.log_event("api_spa_on", "api", _ip(request))
-    return {"status": "success", "action": "spa_on", "note": "aux_1 will enable in 30s"}
+    return {"status": "success", "action": "spa_on", "note": "aux_1 (blower) starts about 30s after the spa pump is running"}
 
 # Endpoint to turn off spa and related devices, with cooldown protection and pool heater fallback
 @app.api_route("/spa-off", methods=["GET", "POST"], dependencies=[Depends(get_api_key)])
